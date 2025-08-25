@@ -1,0 +1,256 @@
+{
+  "demo_summary": {
+    "total_scenarios": 41,
+    "successful": 25,
+    "failed": 16
+  },
+  "demo_results": [
+    {
+      "scenario": "Base Exception",
+      "result": "Error code: DEMO_001, Details: {'demo': True}",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.871137"
+    },
+    {
+      "scenario": "Validation Exception",
+      "result": "Message: Demo validation error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.872137"
+    },
+    {
+      "scenario": "JSON Processing Exception",
+      "result": "Details: {'json': 'demo'}",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.873140"
+    },
+    {
+      "scenario": "Valid JSON",
+      "result": "Valid: True, Warnings: []",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.875139"
+    },
+    {
+      "scenario": "Missing Keys",
+      "result": "Valid: True, Warnings: ['Missing template key: jwt']",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.876140"
+    },
+    {
+      "scenario": "Extra Keys",
+      "result": "Valid: True, Warnings: ['Extra keys will be ignored: extra']",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.877138"
+    },
+    {
+      "scenario": "Invalid Data Types",
+      "result": "Valid: False, Errors: ['Invalid data type for user_id: expected primitive type, got list']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.877138"
+    },
+    {
+      "scenario": "Empty JSON",
+      "result": "Valid: True, Warnings: ['Missing template key: _id', 'Missing template key: user_id', 'Missing template key: jwt']",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.878139"
+    },
+    {
+      "scenario": "Valid JSON Command",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.880136"
+    },
+    {
+      "scenario": "Invalid JSON Command",
+      "result": "Valid: False, Errors: ['Invalid JSON format: Expecting value: line 1 column 26 (char 25)']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.880136"
+    },
+    {
+      "scenario": "Empty JSON Command",
+      "result": "Valid: False, Errors: [\"No JSON data provided after 'Process this JSON:'\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.881136"
+    },
+    {
+      "scenario": "Valid Update Command",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.882139"
+    },
+    {
+      "scenario": "Invalid Update Command",
+      "result": "Valid: False, Errors: [\"No key-value pair provided after 'Update state:'\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.882139"
+    },
+    {
+      "scenario": "Update Command No Equals",
+      "result": "Valid: False, Errors: [\"Invalid format: use 'key=value'\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.883140"
+    },
+    {
+      "scenario": "Empty Command",
+      "result": "Valid: False, Errors: ['Empty command']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.883140"
+    },
+    {
+      "scenario": "Validation Error Formatting",
+      "result": "\u274c Validation Error: Demo validation error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.884136"
+    },
+    {
+      "scenario": "JSON Error Formatting",
+      "result": "\u274c JSON Processing Error: Demo JSON error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.885136"
+    },
+    {
+      "scenario": "State Error Formatting",
+      "result": "\u274c State Update Error: Demo state error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.885136"
+    },
+    {
+      "scenario": "Database Error Formatting",
+      "result": "\u274c Database Error: Demo database error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.886134"
+    },
+    {
+      "scenario": "Input Error Formatting",
+      "result": "\u274c Input Error: Demo input error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.886134"
+    },
+    {
+      "scenario": "Generic Error Formatting",
+      "result": "\u274c System Error: Demo generic error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.887136"
+    },
+    {
+      "scenario": "Technical Error Formatting",
+      "result": "Error: Technical error",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.888137"
+    },
+    {
+      "scenario": "Large JSON Values",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.889137"
+    },
+    {
+      "scenario": "Special Characters JSON",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.890139"
+    },
+    {
+      "scenario": "Numeric Values JSON",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.891140"
+    },
+    {
+      "scenario": "Boolean Values JSON",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.891140"
+    },
+    {
+      "scenario": "Null Values JSON",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.892139"
+    },
+    {
+      "scenario": "Empty String Values JSON",
+      "result": "Valid: True",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.892139"
+    },
+    {
+      "scenario": "Malformed JSON 1",
+      "result": "Valid: False, Errors: ['Invalid JSON format: Expecting property name enclosed in double quotes: line 1 column 15 (char 14)']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.894144"
+    },
+    {
+      "scenario": "Malformed JSON 2",
+      "result": "Valid: False, Errors: [\"Invalid JSON format: Expecting ',' delimiter: line 1 column 14 (char 13)\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.894144"
+    },
+    {
+      "scenario": "Malformed JSON 3",
+      "result": "Valid: False, Errors: ['Invalid JSON format: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.895141"
+    },
+    {
+      "scenario": "Malformed JSON 4",
+      "result": "Valid: False, Errors: ['Invalid JSON format: Expecting property name enclosed in double quotes: line 1 column 13 (char 12)']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.896140"
+    },
+    {
+      "scenario": "Malformed JSON 5",
+      "result": "Valid: False, Errors: ['Invalid JSON format: Expecting value: line 1 column 26 (char 25)']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.896140"
+    },
+    {
+      "scenario": "Malformed Update 1",
+      "result": "Valid: False, Errors: ['Empty key in update command']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.897141"
+    },
+    {
+      "scenario": "Malformed Update 2",
+      "result": "Valid: False, Errors: ['Empty value in update command']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.898134"
+    },
+    {
+      "scenario": "Malformed Update 3",
+      "result": "Valid: False, Errors: [\"Invalid format: use 'key=value'\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.898134"
+    },
+    {
+      "scenario": "Malformed Update 4",
+      "result": "Valid: False, Errors: ['Invalid format: value contains unexpected spaces']",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.899139"
+    },
+    {
+      "scenario": "Malformed Update 5",
+      "result": "Valid: False, Errors: [\"No key-value pair provided after 'Update state:'\"]",
+      "success": false,
+      "timestamp": "2025-08-25T15:55:02.900139"
+    },
+    {
+      "scenario": "Validation Error Logging",
+      "result": "Logged with context: Demo Validation",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.902140"
+    },
+    {
+      "scenario": "JSON Error Logging",
+      "result": "Logged with context: Demo JSON Processing",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.903142"
+    },
+    {
+      "scenario": "Database Error Logging",
+      "result": "Logged with context: Demo Database",
+      "success": true,
+      "timestamp": "2025-08-25T15:55:02.904139"
+    }
+  ],
+  "timestamp": "2025-08-25T15:55:02.906142"
+}

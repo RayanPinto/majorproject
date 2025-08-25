@@ -1,0 +1,85 @@
+# Comprehensive Test Inputs for State Management System
+# Each line represents a test input to try with the system
+
+# ===== VALID INPUTS =====
+Process this JSON: {"_id": "5a97f9c91c807bb9c6eb5fb4", "user_id": "t3qulfeem@kwiv5.6ur", "jwt": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJpYXQiOjE1MTk5MDkzMjEsIm5iZiI6M…"}
+Process this JSON: {"_id": "12345", "user_id": "test_user", "jwt": "valid_token_here"}
+Process this JSON: {"_id": "abc123", "user_id": "demo_user", "jwt": "demo_token"}
+Update state: _id=new_value_123
+Update state: user_id=updated_user
+Update state: jwt=updated_token
+summary
+access state
+show template
+help
+
+# ===== INVALID JSON FORMATS =====
+Process this JSON: {"_id": "123", "user_id":}
+Process this JSON: {"_id": "123", "user_id": "test",}
+Process this JSON: {"_id": "123", user_id: "test"}
+Process this JSON: {"_id": "123", "user_id": "test"
+Process this JSON: {"_id": "123", "user_id": "test", "jwt":}
+Process this JSON: {_id: "123", user_id: "test", jwt: "token"}
+Process this JSON: {"_id": "123", "user_id": ["invalid"], "jwt": "token"}
+Process this JSON: {"_id": "123", "user_id": {"nested": "invalid"}, "jwt": "token"}
+
+# ===== EMPTY AND WHITESPACE INPUTS =====
+Process this JSON:
+Process this JSON: 
+Process this JSON: {}
+Update state:
+Update state: 
+Update state: =value
+Update state: key=
+Update state: key value
+
+# ===== EXTRA KEYS (SHOULD BE WARNINGS) =====
+Process this JSON: {"_id": "123", "user_id": "test", "jwt": "token", "extra": "value"}
+Process this JSON: {"_id": "123", "user_id": "test", "jwt": "token", "ignored": "data", "another": "field"}
+
+# ===== MISSING KEYS (SHOULD BE WARNINGS) =====
+Process this JSON: {"_id": "123", "user_id": "test"}
+Process this JSON: {"_id": "123"}
+Process this JSON: {"user_id": "test", "jwt": "token"}
+
+# ===== SPECIAL CHARACTERS AND EDGE CASES =====
+Process this JSON: {"_id": "test\n\t\r", "user_id": "test\"'\\", "jwt": "test{}[]"}
+Process this JSON: {"_id": "", "user_id": "", "jwt": ""}
+Process this JSON: {"_id": null, "user_id": "test", "jwt": null}
+Process this JSON: {"_id": 123, "user_id": 456, "jwt": "token"}
+Process this JSON: {"_id": true, "user_id": false, "jwt": "token"}
+
+# ===== VERY LARGE VALUES =====
+Process this JSON: {"_id": "x" * 1000, "user_id": "y" * 1000, "jwt": "z" * 1000}
+
+# ===== INVALID UPDATE COMMANDS =====
+Update state: invalid_key=value
+Update state: _id
+Update state: _id=value extra
+Update state: _id=value=extra
+Update state: _id value
+Update state: =_id=value
+
+# ===== UNKNOWN COMMANDS =====
+unknown command
+random text
+Process this JSON
+Update state
+show
+access
+template
+
+# ===== SIMULATION COMMANDS =====
+simulate json
+
+# ===== EXIT COMMANDS =====
+exit
+quit
+
+# ===== MIXED VALID AND INVALID =====
+Process this JSON: {"_id": "valid", "user_id": "valid", "jwt": "valid"}
+Update state: _id=updated
+Process this JSON: {"_id": "invalid", "user_id":}
+Update state: invalid_key=value
+Process this JSON: {"_id": "valid_again", "user_id": "valid_again", "jwt": "valid_again"}
+summary

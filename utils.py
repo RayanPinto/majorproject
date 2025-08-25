@@ -1,6 +1,8 @@
 from datetime import datetime
 import json
+import traceback
 from google.genai import types
+from typing import Dict, Any, Optional
 
 # ANSI color codes for terminal output
 class Colors:
@@ -30,8 +32,15 @@ class Colors:
 # Simplified - no history tracking needed
 
 def log_json_input(session_service, app_name, user_id, session_id, json_data):
+    """Log JSON input with enhanced error handling"""
     try:
+        if not session_service:
+            raise ValueError("Session service is not available")
+        
         session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+        if not session:
+            raise ValueError(f"Session not found: {session_id}")
+        
         json_inputs = session.state.get("json_inputs", [])
         json_inputs.append({
             "json_data": json_data,
@@ -43,13 +52,27 @@ def log_json_input(session_service, app_name, user_id, session_id, json_data):
         updated_state["last_update"] = datetime.now().isoformat()
 
         session_service.create_session(app_name=app_name, user_id=user_id, session_id=session_id, state=updated_state)
+        print(f"{Colors.GREEN}✅ JSON input logged successfully{Colors.RESET}")
+        
+    except ValueError as e:
+        print(f"{Colors.RED}❌ Validation Error: {e}{Colors.RESET}")
     except Exception as e:
-        print(f"{Colors.RED}Error logging JSON input: {e}{Colors.RESET}")
+        print(f"{Colors.RED}❌ Error logging JSON input: {e}{Colors.RESET}")
+        print(f"{Colors.YELLOW}Stack trace: {traceback.format_exc()}{Colors.RESET}")
 
 # Merged display_state (removed duplicate; shows current keys including current_state)
 def display_state(session_service, app_name, user_id, session_id, label="Current State"):
+    """Display state with enhanced error handling"""
     try:
+        if not session_service:
+            print(f"{Colors.YELLOW}⚠️ Session service not available{Colors.RESET}")
+            return
+        
         session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+        if not session:
+            print(f"{Colors.YELLOW}⚠️ Session not found: {session_id}{Colors.RESET}")
+            return
+        
         print(f"\n{'-' * 10} {label} {'-' * 10}")
         
         # Show only state management related fields
@@ -62,8 +85,12 @@ def display_state(session_service, app_name, user_id, session_id, label="Current
         print(f"🕒 Last Update: {last_update}")
         
         print("-" * (22 + len(label)))
+        
+    except json.JSONDecodeError as e:
+        print(f"{Colors.RED}❌ JSON Error displaying state: {e}{Colors.RESET}")
     except Exception as e:
-        print(f"{Colors.RED}Error displaying state: {e}{Colors.RESET}")
+        print(f"{Colors.RED}❌ Error displaying state: {e}{Colors.RESET}")
+        print(f"{Colors.YELLOW}Stack trace: {traceback.format_exc()}{Colors.RESET}")
 
 # === AGENT RESPONSE HANDLING ===
 
@@ -95,26 +122,44 @@ async def process_agent_response(event):
     return final_response
 
 async def call_agent_async(runner, user_id, session_id, query):
-    content = types.Content(role="user", parts=[types.Part(text=query)])
-    print(f"\n{Colors.BG_GREEN}{Colors.BLACK}{Colors.BOLD}--- Running Query: {query} ---{Colors.RESET}")
-    final_response_text = None
-    agent_name = None
-
-    display_state(runner.session_service, runner.app_name, user_id, session_id, "State BEFORE processing")
-
+    """Call agent with enhanced error handling"""
     try:
-        async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
-            if event.author:
-                agent_name = event.author
+        if not runner:
+            raise ValueError("Agent runner is not available")
+        
+        if not query or not query.strip():
+            raise ValueError("Query cannot be empty")
+        
+        content = types.Content(role="user", parts=[types.Part(text=query)])
+        print(f"\n{Colors.BG_GREEN}{Colors.BLACK}{Colors.BOLD}--- Running Query: {query} ---{Colors.RESET}")
+        final_response_text = None
+        agent_name = None
 
-            response = await process_agent_response(event)
-            if response:
-                final_response_text = response
+        display_state(runner.session_service, runner.app_name, user_id, session_id, "State BEFORE processing")
+
+        try:
+            async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
+                if event.author:
+                    agent_name = event.author
+
+                response = await process_agent_response(event)
+                if response:
+                    final_response_text = response
+                    
+        except Exception as e:
+            print(f"{Colors.BG_RED}{Colors.WHITE}❌ ERROR during agent run: {e}{Colors.RESET}")
+            print(f"{Colors.YELLOW}Stack trace: {traceback.format_exc()}{Colors.RESET}")
+
+        # No need to track agent responses - focus on state management only
+
+        display_state(runner.session_service, runner.app_name, user_id, session_id, "State AFTER processing")
+        print(f"{Colors.YELLOW}{'-' * 30}{Colors.RESET}")
+        return final_response_text
+        
+    except ValueError as e:
+        print(f"{Colors.RED}❌ Validation Error: {e}{Colors.RESET}")
+        return None
     except Exception as e:
-        print(f"{Colors.BG_RED}{Colors.WHITE}ERROR during agent run: {e}{Colors.RESET}")
-
-    # No need to track agent responses - focus on state management only
-
-    display_state(runner.session_service, runner.app_name, user_id, session_id, "State AFTER processing")
-    print(f"{Colors.YELLOW}{'-' * 30}{Colors.RESET}")
-    return final_response_text
+        print(f"{Colors.RED}❌ Unexpected error in agent call: {e}{Colors.RESET}")
+        print(f"{Colors.YELLOW}Stack trace: {traceback.format_exc()}{Colors.RESET}")
+        return None
