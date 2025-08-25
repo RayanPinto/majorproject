@@ -1,8 +1,7 @@
 import asyncio
 import os
 import json
-import sys
-import traceback
+import re
 from datetime import datetime, timezone
 from uuid import uuid4
 from dotenv import load_dotenv
@@ -10,325 +9,201 @@ from typing import Dict, Any, Optional, List
 
 from manager.agent import state_manager_agent
 from google.adk.runners import Runner
-from google.adk.sessions import InMemorySessionService
 from pymongo import MongoClient
-from pymongo.errors import ConnectionFailure, ServerSelectionTimeoutError
+from google.adk.sessions import InMemorySessionService
+from mongodb_session_service import MongoDBSessionService
 
-from utils import call_agent_async
-
-load_dotenv()
+from utils import add_user_query_to_history, call_agent_async
 
 # ===== ERROR HANDLING CLASSES =====
 
 class StateManagementError(Exception):
     """Base exception for state management errors"""
-    def __init__(self, message: str, error_code: str = None, details: Dict = None):
+    def __init__(self, message: str, error_code: str = "UNKNOWN", details: Optional[Dict[str, Any]] = None):
         self.message = message
         self.error_code = error_code
         self.details = details or {}
         super().__init__(self.message)
 
 class ValidationError(StateManagementError):
-    """Raised when validation fails"""
-    pass
+    """Exception for validation errors"""
+    def __init__(self, message: str, error_code: str = "VAL_001", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code, details)
 
 class JSONProcessingError(StateManagementError):
-    """Raised when JSON processing fails"""
-    pass
+    """Exception for JSON processing errors"""
+    def __init__(self, message: str, error_code: str = "JSON_001", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code, details)
 
 class StateUpdateError(StateManagementError):
-    """Raised when state update fails"""
-    pass
+    """Exception for state update errors"""
+    def __init__(self, message: str, error_code: str = "STATE_001", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code, details)
 
 class DatabaseError(StateManagementError):
-    """Raised when database operations fail"""
-    pass
+    """Exception for database errors"""
+    def __init__(self, message: str, error_code: str = "DB_001", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code, details)
 
 class UserInputError(StateManagementError):
-    """Raised when user input is invalid"""
-    pass
+    """Exception for user input errors"""
+    def __init__(self, message: str, error_code: str = "INPUT_001", details: Optional[Dict[str, Any]] = None):
+        super().__init__(message, error_code, details)
 
-# ===== ERROR HANDLING UTILITIES =====
+# ===== VALIDATION FUNCTIONS =====
 
-def log_error(error: Exception, context: str = "", details: Dict = None):
-    """Log error with context and details"""
-    timestamp = datetime.now().isoformat()
-    error_info = {
-        "timestamp": timestamp,
-        "error_type": type(error).__name__,
-        "error_message": str(error),
-        "context": context,
-        "details": details or {}
+def validate_json_structure(json_data: Dict[str, Any], template_keys: List[str]) -> Dict[str, Any]:
+    """Validate JSON structure against template keys"""
+    result = {
+        "valid": True,
+        "errors": [],
+        "warnings": []
     }
     
-    if hasattr(error, 'error_code'):
-        error_info["error_code"] = error.error_code
-    if hasattr(error, 'details'):
-        error_info["details"].update(error.details)
-    
-    print(f"❌ ERROR [{timestamp}] {context}: {error}")
-    if details:
-        print(f"   Details: {details}")
-    
-    return error_info
-
-def format_error_response(error: Exception, user_friendly: bool = True) -> str:
-    """Format error message for user display"""
-    if user_friendly:
-        if isinstance(error, ValidationError):
-            return f"❌ Validation Error: {error.message}"
-        elif isinstance(error, JSONProcessingError):
-            return f"❌ JSON Processing Error: {error.message}"
-        elif isinstance(error, StateUpdateError):
-            return f"❌ State Update Error: {error.message}"
-        elif isinstance(error, DatabaseError):
-            return f"❌ Database Error: {error.message}"
-        elif isinstance(error, UserInputError):
-            return f"❌ Input Error: {error.message}"
-        else:
-            return f"❌ System Error: {str(error)}"
-    else:
-        return f"Error: {error}"
-
-def validate_json_structure(json_data: Dict, template_keys: List[str]) -> Dict[str, Any]:
-    """Validate JSON structure against template"""
-    errors = []
-    warnings = []
-    
-    # Check for missing required keys
-    for key in template_keys:
-        if key not in json_data:
-            warnings.append(f"Missing template key: {key}")
+    # Check for missing keys
+    missing_keys = [key for key in template_keys if key not in json_data]
+    if missing_keys:
+        result["warnings"].append(f"Missing keys: {', '.join(missing_keys)}")
     
     # Check for extra keys
     extra_keys = [key for key in json_data.keys() if key not in template_keys]
     if extra_keys:
-        warnings.append(f"Extra keys will be ignored: {', '.join(extra_keys)}")
+        result["warnings"].append(f"Extra keys found: {', '.join(extra_keys)}")
     
-    # Validate data types
+    # Check data types (all should be strings for this template)
     for key, value in json_data.items():
-        if key in template_keys:
-            if not isinstance(value, (str, int, float, bool, type(None))):
-                errors.append(f"Invalid data type for {key}: expected primitive type, got {type(value).__name__}")
+        if key in template_keys and not isinstance(value, (str, int, float, bool, type(None))):
+            result["errors"].append(f"Invalid data type for {key}: expected string, got {type(value).__name__}")
+            result["valid"] = False
     
-    return {
-        "valid": len(errors) == 0,
-        "errors": errors,
-        "warnings": warnings
-    }
+    return result
 
-def validate_user_input(command: str) -> Dict[str, Any]:
-    """Validate user input command"""
-    errors = []
-    warnings = []
+def validate_user_input(user_input: str) -> Dict[str, Any]:
+    """Validate user input for commands"""
+    result = {
+        "valid": True,
+        "errors": [],
+        "warnings": []
+    }
     
-    if not command.strip():
-        errors.append("Empty command")
-        return {"valid": False, "errors": errors, "warnings": warnings}
+    if not user_input or not user_input.strip():
+        result["valid"] = False
+        result["errors"].append("Empty input")
+        return result
     
-    # Check for common command patterns
-    if command.startswith("Process this JSON:"):
-        json_part = command[len("Process this JSON:"):].strip()
+    user_input = user_input.strip()
+    
+    # Check for JSON processing command
+    if user_input.lower().startswith("process this json:"):
+        json_part = user_input[len("process this json:"):].strip()
         if not json_part:
-            errors.append("No JSON data provided after 'Process this JSON:'")
+            result["valid"] = False
+            result["errors"].append("No JSON data provided")
         else:
             try:
+                # Try to parse as JSON
                 json.loads(json_part)
             except json.JSONDecodeError as e:
-                errors.append(f"Invalid JSON format: {str(e)}")
+                result["valid"] = False
+                result["errors"].append(f"Invalid JSON format: {str(e)}")
     
-    elif command.startswith("Update state:"):
-        update_part = command[len("Update state:"):].strip()
+    # Check for state update command
+    elif user_input.lower().startswith("update state:"):
+        update_part = user_input[len("update state:"):].strip()
         if not update_part:
-            errors.append("No key-value pair provided after 'Update state:'")
+            result["valid"] = False
+            result["errors"].append("No update data provided")
         elif "=" not in update_part:
-            errors.append("Invalid format: use 'key=value'")
+            result["valid"] = False
+            result["errors"].append("Update format should be 'key=value'")
         else:
+            # Check for empty key or value
             parts = update_part.split("=", 1)
             if len(parts) != 2:
-                errors.append("Invalid format: use 'key=value'")
+                result["valid"] = False
+                result["errors"].append("Update format should be 'key=value'")
+            elif not parts[0].strip():
+                result["valid"] = False
+                result["errors"].append("Empty key in update command")
+            elif not parts[1].strip():
+                result["valid"] = False
+                result["errors"].append("Empty value in update command")
             else:
-                key, value = parts
-                if not key.strip():
-                    errors.append("Empty key in update command")
                 # Check for extra text after the value
-                if " " in value and not value.strip().startswith('"'):
-                    errors.append("Invalid format: value contains unexpected spaces")
-                # Empty values are not allowed in this context
-                if not value.strip():
-                    errors.append("Empty value in update command")
+                key = parts[0].strip()
+                value_part = parts[1].strip()
+                # Split by whitespace to check for extra text
+                value_parts = value_part.split()
+                if len(value_parts) > 1:
+                    result["valid"] = False
+                    result["errors"].append("Update format should be 'key=value' with no extra text")
     
-    return {"valid": len(errors) == 0, "errors": errors, "warnings": warnings}
+    return result
+
+def format_error_response(error: Exception, user_friendly: bool = True) -> str:
+    """Format error response for user display"""
+    if user_friendly:
+        if isinstance(error, ValidationError):
+            return f"Validation Error: {error.message}"
+        elif isinstance(error, JSONProcessingError):
+            return f"JSON Processing Error: {error.message}"
+        elif isinstance(error, StateUpdateError):
+            return f"State Update Error: {error.message}"
+        elif isinstance(error, DatabaseError):
+            return f"Database Error: {error.message}"
+        elif isinstance(error, UserInputError):
+            return f"Input Error: {error.message}"
+        elif isinstance(error, StateManagementError):
+            return f"State Management Error: {error.message}"
+        else:
+            return "System Error: An unexpected error occurred. Please try again."
+    else:
+        if isinstance(error, StateManagementError):
+            return f"Error: {error.message} | Code: {error.error_code} | Details: {error.details}"
+        else:
+            return f"Error: {str(error)}"
+
+def log_error(error: Exception, context: str, additional_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Log error with context for debugging"""
+    error_info = {
+        "timestamp": datetime.now().isoformat(),
+        "context": context,
+        "error_type": type(error).__name__,
+        "error_message": str(error),
+        "additional_context": additional_context or {}
+    }
+    
+    if isinstance(error, StateManagementError):
+        error_info["error_code"] = error.error_code
+        error_info["details"] = error.details
+    
+    # In a real implementation, this would be logged to a file or database
+    print(f"ERROR LOG: {error_info}")
+    
+    return error_info
+
+load_dotenv()
 
 # ===== PART 1: Initialize Persistent Session Service (MongoDB-backed) =====
 # We'll use an in-memory session service for the ADK runtime and persist state to MongoDB Atlas.
 
-# MongoDB connection with error handling
-def initialize_database():
-    """Initialize database connection with error handling"""
-    try:
-        MONGODB_URI = os.getenv("MONGODB_URI")
-        if not MONGODB_URI:
-            raise DatabaseError("MongoDB URI not found in environment variables", "DB_001")
-        
-        mongo_client = MongoClient(MONGODB_URI, serverSelectionTimeoutMS=5000)
-        # Test connection
-        mongo_client.admin.command('ping')
-        
-        mongo_db = mongo_client.get_database(os.getenv("MONGODB_DB", "adk_app"))
-        sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions"))
-        
-        print("✅ Database connection established successfully")
-        return mongo_client, mongo_db, sessions_col
-        
-    except (ConnectionFailure, ServerSelectionTimeoutError) as e:
-        error_msg = f"Failed to connect to MongoDB: {str(e)}"
-        log_error(e, "Database Connection", {"mongodb_uri": MONGODB_URI})
-        raise DatabaseError(error_msg, "DB_002", {"original_error": str(e)})
-    except Exception as e:
-        error_msg = f"Unexpected database error: {str(e)}"
-        log_error(e, "Database Initialization")
-        raise DatabaseError(error_msg, "DB_003", {"original_error": str(e)})
+# MongoDB connection (prefer env var, fallback to provided URI)
+MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+mongo_client = MongoClient(MONGODB_URI)
+mongo_db = mongo_client.get_database(os.getenv("MONGODB_DB", "adk_app"))
+sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions"))
 
-# Initialize database
-try:
-    mongo_client, mongo_db, sessions_col = initialize_database()
-except DatabaseError as e:
-    print(f"⚠️ Database connection failed: {e.message}")
-    print("🔄 Running in offline mode (state will not be persisted)")
-    mongo_client = mongo_db = sessions_col = None
-
-# In-memory session service used by the Runner
-session_service = InMemorySessionService()
-
-def safe_persist_state(app_name: str, user_id: str, session_id: str, state: Dict, sessions_col):
-    """Safely persist state to database with error handling"""
-    if sessions_col is None:
-        return False  # Database not available
-    
-    try:
-        sessions_col.update_one(
-            {"app_name": app_name, "user_id": user_id, "session_id": session_id},
-            {
-                "$set": {
-                    "app_name": app_name,
-                    "user_id": user_id,
-                    "session_id": session_id,
-                    "state": state,
-                    "updated_at": datetime.now(timezone.utc),
-                }
-            },
-            upsert=True,
-        )
-        return True
-    except Exception as e:
-        log_error(e, "State Persistence", {
-            "app_name": app_name,
-            "user_id": user_id,
-            "session_id": session_id
-        })
-        return False
-
-async def handle_json_processing(user_input: str, app_name: str, user_id: str, session_id: str, session_service, sessions_col):
-    """Handle JSON processing with comprehensive error handling"""
-    try:
-        # Extract JSON string
-        json_str = user_input.split("Process this JSON: ")[1]
-        if not json_str.strip():
-            raise UserInputError("No JSON data provided after 'Process this JSON:'", "INPUT_001")
-        
-        # Parse JSON
-        try:
-            json_data = json.loads(json_str)
-        except json.JSONDecodeError as e:
-            raise JSONProcessingError(f"Invalid JSON format: {str(e)}", "JSON_001", {"json_string": json_str})
-        
-        # Get current session
-        try:
-            current_session = session_service.get_session(
-                app_name=app_name, user_id=user_id, session_id=session_id
-            )
-        except Exception as e:
-            raise StateUpdateError(f"Failed to get session: {str(e)}", "SESS_002")
-        
-        # Initialize state if needed
-        if "current_state" not in current_session.state:
-            current_session.state["current_state"] = {
-                "_id": "",
-                "user_id": "",
-                "jwt": ""
-            }
-            current_session.state["json_inputs"] = []
-        
-        # Validate JSON structure
-        template_keys = ["_id", "user_id", "jwt"]
-        validation_result = validate_json_structure(json_data, template_keys)
-        
-        if validation_result["warnings"]:
-            for warning in validation_result["warnings"]:
-                print(f"⚠️ {warning}")
-        
-        if not validation_result["valid"]:
-            for error in validation_result["errors"]:
-                print(f"❌ {error}")
-            raise ValidationError("JSON validation failed", "VAL_001", {"errors": validation_result["errors"]})
-        
-        # Store raw JSON input
-        current_session.state["json_inputs"].append({
-            "json_data": json_data,
-            "timestamp": datetime.now().isoformat()
-        })
-        
-        # Update matching keys in current state
-        current_state = current_session.state["current_state"]
-        updated_keys = []
-        
-        for key, value in json_data.items():
-            if key in current_state:
-                current_state[key] = value
-                updated_keys.append(key)
-        
-        current_session.state["current_state"] = current_state
-        current_session.state["last_update"] = datetime.now().isoformat()
-        
-        # Update session
-        try:
-            session_service.create_session(
-                app_name=app_name,
-                user_id=user_id,
-                session_id=session_id,
-                state=current_session.state
-            )
-        except Exception as e:
-            raise StateUpdateError(f"Failed to update session: {str(e)}", "SESS_003")
-        
-        # Persist to database
-        if safe_persist_state(app_name, user_id, session_id, current_session.state, sessions_col):
-            print("💾 State persisted to database")
-        
-        # Display results
-        if updated_keys:
-            print(f"✅ State updated successfully!")
-            print(f"Updated keys: {', '.join(updated_keys)}")
-            print(f"Current state: {json.dumps(current_state, indent=2)}")
-        else:
-            print(f"⚠️ No matching keys found in JSON.")
-            print(f"Template keys: {list(current_state.keys())}")
-            print(f"JSON keys: {list(json_data.keys())}")
-            print("State unchanged.")
-            
-    except (UserInputError, JSONProcessingError, ValidationError, StateUpdateError) as e:
-        print(format_error_response(e))
-        log_error(e, "JSON Processing", {"user_input": user_input})
-    except Exception as e:
-        print(f"❌ Unexpected error processing JSON: {str(e)}")
-        log_error(e, "JSON Processing", {"user_input": user_input})
+# MongoDB session service used by the Runner
+session_service = MongoDBSessionService(MONGODB_URI)
 
 # For testing: Load a sample JSON file (simulating model output)
 SAMPLE_JSON_FILE = "sample_json_output.json"  # Assume this file exists with structured JSON
 
 # ===== PART 2: Define Initial State =====
 initial_state = {
+    "user_name": "Developer",
+    "interaction_history": [],
+    "user_queries": [],
     "json_inputs": [],  # Store raw input JSONs for reference
     "current_state": {  # Default template with empty values
         "_id": "",
@@ -336,6 +211,7 @@ initial_state = {
         "jwt": ""
     },
     "last_update": None,  # Timestamp of last state update
+    "timestamps": [],
 }
 
 async def main_async():
@@ -344,256 +220,72 @@ async def main_async():
     USER_ID = "developer_user"
 
     # ===== PART 3: Session Management - Load from Mongo or Create =====
-    try:
-        if sessions_col is not None:
-            # Try to load the most recent session for this app/user from MongoDB
-            existing_doc = sessions_col.find_one(
-                {"app_name": APP_NAME, "user_id": USER_ID},
-                sort=[("updated_at", -1)],
-            )
+    # Try to load the most recent session for this app/user from MongoDB
+    existing_doc = sessions_col.find_one(
+        {"app_name": APP_NAME, "user_id": USER_ID},
+        sort=[("updated_at", -1)],
+    )
 
-            if existing_doc and isinstance(existing_doc.get("state"), dict):
-                # Use state from Mongo and continue that session
-                state_to_use = existing_doc["state"]
-                SESSION_ID = existing_doc.get("session_id") or str(uuid4())
-                print(f"✅ Continuing existing session (Mongo): {SESSION_ID}")
-            else:
-                # No prior session found; start fresh
-                state_to_use = initial_state
-                SESSION_ID = str(uuid4())
-                print(f"🆕 Created new session (Mongo): {SESSION_ID}")
-        else:
-            # Database not available, start fresh
-            state_to_use = initial_state
-            SESSION_ID = str(uuid4())
-            print(f"🆕 Created new session (Offline): {SESSION_ID}")
-            
-    except Exception as e:
-        log_error(e, "Session Loading")
-        # Fallback to fresh session
+    if existing_doc and isinstance(existing_doc.get("state"), dict):
+        # Use state from Mongo and continue that session
+        state_to_use = existing_doc["state"]
+        SESSION_ID = existing_doc.get("session_id") or str(uuid4())
+        print(f"Continuing existing session (Mongo): {SESSION_ID}")
+    else:
+        # No prior session found; start fresh
         state_to_use = initial_state
         SESSION_ID = str(uuid4())
-        print(f"🆕 Created new session (Fallback): {SESSION_ID}")
+        print(f"Created new session (Mongo): {SESSION_ID}")
 
-    # Create the session inside the in-memory service with the chosen ID/state
-    try:
-        session_service.create_session(
-            app_name=APP_NAME,
-            user_id=USER_ID,
-            session_id=SESSION_ID,
-            state=state_to_use,
-        )
-        print("✅ Session created successfully")
-    except Exception as e:
-        log_error(e, "Session Creation")
-        raise StateUpdateError(f"Failed to create session: {str(e)}", "SESS_001")
+    # Create the session in MongoDB
+    session_service.create_session(
+        app_name=APP_NAME,
+        user_id=USER_ID,
+        session_id=SESSION_ID,
+        state=state_to_use,
+    )
 
     # ===== PART 4: Agent Runner Setup =====
-    try:
-        runner = Runner(
-            agent=state_manager_agent,
-            app_name=APP_NAME,
-            session_service=session_service,
-        )
-        print("✅ Agent runner initialized successfully")
-    except Exception as e:
-        log_error(e, "Agent Runner Setup")
-        raise StateUpdateError(f"Failed to initialize agent runner: {str(e)}", "RUNNER_001")
+    runner = Runner(
+        agent=state_manager_agent,
+        app_name=APP_NAME,
+        session_service=session_service,
+    )
 
-    # Persist initial state to MongoDB so the session exists even before first user input
-    try:
-        current_session = session_service.get_session(
-            app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-        )
-        
-        if safe_persist_state(APP_NAME, USER_ID, SESSION_ID, current_session.state, sessions_col):
-            print("✅ Initial state persisted to database")
-        else:
-            print("⚠️ Failed to persist initial state (continuing in memory only)")
-            
-    except Exception as e:
-        log_error(e, "Initial State Persistence")
-        print("⚠️ Failed to persist initial state (continuing in memory only)")
+    # Session is already persisted in MongoDB via the session service
+    print(f"Session ready: {SESSION_ID}")
 
     # ===== PART 5: Interactive Loop =====
-    print("\n🎉 Welcome to Stateful JSON Assistant!")
-    print("📝 Available commands:")
-    print("  • Process this JSON: {...} - Update state with JSON data")
-    print("  • Update state: key=value - Manually update a specific key")
-    print("  • summary - Show current state summary")
-    print("  • access state - Show full current state")
-    print("  • show template - Display the default template")
-    print("  • simulate json - Load sample JSON from file")
-    print("  • help - Show this help message")
-    print("  • exit/quit - End the conversation")
-    print("\nType 'help' for more information.\n")
+    print("\nWelcome to Coding Assistant Chat!")
+    print("Ask coding doubts or request code generation.")
+    print("Type 'exit' or 'quit' to end the conversation.\n")
 
     while True:
-        try:
-            user_input = input("You: ").strip()
+        user_input = input("You: ")
 
-            if not user_input:
-                print("💡 Please enter a command. Type 'help' for available commands.")
-                continue
-
-            if user_input.lower() in ["exit", "quit"]:
-                print("👋 Ending session. Goodbye!")
-                break
-
-            if user_input.lower() == "help":
-                print("\n📚 Available Commands:")
-                print("  • Process this JSON: {...} - Update state with JSON data")
-                print("  • Update state: key=value - Manually update a specific key")
-                print("  • summary - Show current state summary")
-                print("  • access state - Show full current state")
-                print("  • show template - Display the default template")
-                print("  • simulate json - Load sample JSON from file")
-                print("  • help - Show this help message")
-                print("  • exit/quit - End the conversation")
-                continue
-
-            # Validate user input first
-            validation_result = validate_user_input(user_input)
-            if not validation_result["valid"]:
-                for error in validation_result["errors"]:
-                    print(f"❌ {error}")
-                if validation_result["warnings"]:
-                    for warning in validation_result["warnings"]:
-                        print(f"⚠️ {warning}")
-                continue
-
-            # Handle state management commands directly
-            if user_input.startswith("Process this JSON:"):
-                await handle_json_processing(user_input, APP_NAME, USER_ID, SESSION_ID, session_service, sessions_col)
-                
-            elif user_input.startswith("Update state:"):
-                # Handle manual state updates
-                try:
-                    update_str = user_input.split("Update state: ")[1].strip()
-                    key, value = update_str.split("=", 1)
-                    key = key.strip()
-                    value = value.strip()
-                    
-                    # Get current session
-                    current_session = session_service.get_session(
-                        app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-                    )
-                    
-                    # Initialize state if needed
-                    if "current_state" not in current_session.state:
-                        current_session.state["current_state"] = {
-                            "_id": "",
-                            "user_id": "",
-                            "jwt": ""
-                        }
-                    
-                    current_state = current_session.state["current_state"]
-                    
-                    if key in current_state:
-                        current_state[key] = value
-                        current_session.state["current_state"] = current_state
-                        current_session.state["last_update"] = datetime.now().isoformat()
-                        
-                        # Update session
-                        session_service.create_session(
-                            app_name=APP_NAME,
-                            user_id=USER_ID,
-                            session_id=SESSION_ID,
-                            state=current_session.state
-                        )
-                        
-                        print(f"✅ State updated: {key} = {value}")
-                        print(f"Current state: {json.dumps(current_state, indent=2)}")
-                    else:
-                        print(f"❌ Key '{key}' not found in template.")
-                        print(f"Available keys: {list(current_state.keys())}")
-                        
-                except ValueError:
-                    print("❌ Invalid format. Use 'Update state: key=value'")
-                except Exception as e:
-                    print(f"❌ Error updating state: {e}")
-                    
-            elif user_input.lower() in ["summary", "summarize"]:
-                # Handle summary requests
-                current_session = session_service.get_session(
-                    app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-                )
-                
-                current_state = current_session.state.get("current_state", {})
-                last_update = current_session.state.get("last_update", "Never")
-                
-                print("📋 Current State Summary:")
-                print(f"🕒 Last Updated: {last_update}")
-                print()
-                
-                if not current_state:
-                    print("No state data yet. Template not initialized.")
-                else:
-                    for key, value in current_state.items():
-                        if value:
-                            print(f"✅ {key}: {value}")
-                        else:
-                            print(f"⏳ {key}: [Empty - waiting for data]")
-                            
-            elif user_input.lower() in ["access state", "show state"]:
-                # Handle state access requests
-                current_session = session_service.get_session(
-                    app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-                )
-                
-                current_state = current_session.state.get("current_state", {})
-                last_update = current_session.state.get("last_update", "Never")
-                
-                print("📊 Current State:")
-                print(json.dumps(current_state, indent=2))
-                print(f"🕒 Last Updated: {last_update}")
-                
-            elif user_input.lower() in ["show template", "template"]:
-                # Handle template display requests
-                template = {
-                    "_id": "",
-                    "user_id": "",
-                    "jwt": ""
-                }
-                print("📋 Default Template:")
-                print(json.dumps(template, indent=2))
-                print("This template defines the expected keys for state management.")
-                
-            elif "simulate json" in user_input.lower():
-                try:
-                    with open(SAMPLE_JSON_FILE, 'r') as f:
-                        json_data = json.load(f)
-                    # Simulate passing JSON to the agent via query
-                    simulated_query = f"Process this JSON: {json.dumps(json_data)}"
-                    print(f"Simulating JSON input: {json.dumps(json_data, indent=2)}")
-                    # Process it directly
-                    user_input = simulated_query
-                    # Re-run the loop to process this JSON
-                    continue
-                except Exception as e:
-                    print(f"Error loading sample JSON: {e}")
-            else:
-                # Normal agent call for other queries
-                await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
-
-            # Persist updated state to MongoDB after each turn
-            try:
-                current_session = session_service.get_session(
-                    app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID
-                )
-                result = safe_persist_state(APP_NAME, USER_ID, SESSION_ID, current_session.state, sessions_col)
-                if result:
-                    pass  # Successfully persisted
-            except Exception as e:
-                log_error(e, "State Persistence")
-                
-        except KeyboardInterrupt:
-            print("\n👋 Interrupted by user. Goodbye!")
+        if user_input.lower() in ["exit", "quit"]:
+            print("Ending session. Goodbye!")
             break
-        except Exception as e:
-            print(f"❌ Unexpected error: {str(e)}")
-            log_error(e, "Main Loop")
-            print("🔄 Continuing...")
+
+        # Save to history
+        add_user_query_to_history(session_service, APP_NAME, USER_ID, SESSION_ID, user_input)
+
+        # Simulate receiving JSON output for testing (e.g., if user says "simulate json")
+        if "simulate json" in user_input.lower():
+            try:
+                with open(SAMPLE_JSON_FILE, 'r') as f:
+                    json_data = json.load(f)
+                # Simulate passing JSON to the agent via query
+                simulated_query = f"Process this JSON: {json.dumps(json_data)}"
+                await call_agent_async(runner, USER_ID, SESSION_ID, simulated_query)
+            except Exception as e:
+                print(f"Error loading sample JSON: {e}")
+        else:
+            # Normal agent call
+            await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
+
+        # State is automatically persisted by the MongoDB session service
+        pass
 
     # ===== PART 6: Final State =====
     final_session = session_service.get_session(
@@ -601,11 +293,15 @@ async def main_async():
         user_id=USER_ID,
         session_id=SESSION_ID
     )
+    
     print("\nFinal Session State:")
     for key, value in final_session.state.items():
         print(f"{key}: {value}")
     
     print("Ending conversation. Your data has been saved to MongoDB Atlas.")
+    
+    # Close the session service
+    session_service.close()
 
 def main():
     asyncio.run(main_async())

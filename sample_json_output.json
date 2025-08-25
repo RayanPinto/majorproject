@@ -1,5 +1,5 @@
 {
-    "key": "value",
-    "list": [1, 2, 3]
-  }
-  
+  "_id": "sample_123",
+  "user_id": "test_user",
+  "jwt": "sample_jwt_token"
+}
