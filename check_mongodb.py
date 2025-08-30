@@ -63,3 +63,6 @@ if recent_docs:
             print(f"  Last Update: {state.get('last_update', 'N/A')}")
 
 print("\n✅ MongoDB data storage check completed!")
+
+
+

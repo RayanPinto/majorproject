@@ -10,236 +10,236 @@
       "test_name": "Base Exception Creation",
       "passed": true,
       "details": "Error code: TEST_001",
-      "timestamp": "2025-08-25T15:51:43.951109"
+      "timestamp": "2025-08-25T21:35:03.760305"
     },
     {
       "test_name": "Validation Exception",
       "passed": true,
       "details": "Message: Test validation error",
-      "timestamp": "2025-08-25T15:51:43.952108"
+      "timestamp": "2025-08-25T21:35:03.760305"
     },
     {
       "test_name": "JSON Processing Exception",
       "passed": true,
       "details": "Details: {'json': 'test'}",
-      "timestamp": "2025-08-25T15:51:43.953111"
+      "timestamp": "2025-08-25T21:35:03.760305"
     },
     {
       "test_name": "Valid JSON Structure",
       "passed": true,
       "details": "Warnings: []",
-      "timestamp": "2025-08-25T15:51:43.953111"
+      "timestamp": "2025-08-25T21:35:03.760305"
     },
     {
       "test_name": "Missing Keys JSON",
       "passed": true,
-      "details": "Warnings: ['Missing template key: jwt']",
-      "timestamp": "2025-08-25T15:51:43.954114"
+      "details": "Warnings: ['Missing keys: jwt']",
+      "timestamp": "2025-08-25T21:35:03.760305"
     },
     {
       "test_name": "Extra Keys JSON",
       "passed": true,
-      "details": "Warnings: ['Extra keys will be ignored: extra']",
-      "timestamp": "2025-08-25T15:51:43.954114"
+      "details": "Warnings: ['Extra keys found: extra']",
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Invalid Data Types",
       "passed": true,
-      "details": "Errors: ['Invalid data type for user_id: expected primitive type, got list']",
-      "timestamp": "2025-08-25T15:51:43.954114"
+      "details": "Errors: ['Invalid data type for user_id: expected string, got list']",
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Empty JSON",
       "passed": true,
-      "details": "Warnings: ['Missing template key: _id', 'Missing template key: user_id', 'Missing template key: jwt']",
-      "timestamp": "2025-08-25T15:51:43.955109"
+      "details": "Warnings: ['Missing keys: _id, user_id, jwt']",
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Valid JSON Command",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.956109"
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Invalid JSON Command",
       "passed": true,
       "details": "Errors: ['Invalid JSON format: Expecting value: line 1 column 26 (char 25)']",
-      "timestamp": "2025-08-25T15:51:43.956109"
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Empty JSON Command",
       "passed": true,
-      "details": "Errors: [\"No JSON data provided after 'Process this JSON:'\"]",
-      "timestamp": "2025-08-25T15:51:43.957109"
+      "details": "Errors: ['No JSON data provided']",
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Valid Update Command",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.957109"
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Invalid Update Command",
       "passed": true,
-      "details": "Errors: [\"No key-value pair provided after 'Update state:'\"]",
-      "timestamp": "2025-08-25T15:51:43.958355"
+      "details": "Errors: ['No update data provided']",
+      "timestamp": "2025-08-25T21:35:03.761303"
     },
     {
       "test_name": "Update Command No Equals",
       "passed": true,
-      "details": "Errors: [\"Invalid format: use 'key=value'\"]",
-      "timestamp": "2025-08-25T15:51:43.959352"
+      "details": "Errors: [\"Update format should be 'key=value'\"]",
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Empty Command",
       "passed": true,
-      "details": "Errors: ['Empty command']",
-      "timestamp": "2025-08-25T15:51:43.959352"
+      "details": "Errors: ['Empty input']",
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Whitespace Command",
       "passed": true,
-      "details": "Errors: ['Empty command']",
-      "timestamp": "2025-08-25T15:51:43.960347"
+      "details": "Errors: ['Empty input']",
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Validation Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.961355"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "JSON Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.961355"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "State Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.962351"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Database Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.962351"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Input Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.963349"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Generic Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.963349"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Technical Error Formatting",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Large JSON Values",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.762302"
     },
     {
       "test_name": "Special Characters JSON",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Numeric Values JSON",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Boolean Values JSON",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Null Values JSON",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Empty String Values JSON",
       "passed": true,
       "details": "",
-      "timestamp": "2025-08-25T15:51:43.964348"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed JSON 1",
       "passed": true,
       "details": "Input: Process this JSON: {\"_id\": \"123\",}",
-      "timestamp": "2025-08-25T15:51:43.965347"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed JSON 2",
       "passed": true,
       "details": "Input: Process this JSON: {\"_id\": \"123\"",
-      "timestamp": "2025-08-25T15:51:43.965347"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed JSON 3",
       "passed": true,
       "details": "Input: Process this JSON: {_id: \"123\"}",
-      "timestamp": "2025-08-25T15:51:43.965347"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed JSON 4",
       "passed": true,
       "details": "Input: Process this JSON: {\"_id\": 123,}",
-      "timestamp": "2025-08-25T15:51:43.965347"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed JSON 5",
       "passed": true,
       "details": "Input: Process this JSON: {\"_id\": \"123\", \"user_id\":}",
-      "timestamp": "2025-08-25T15:51:43.966347"
+      "timestamp": "2025-08-25T21:35:03.763302"
     },
     {
       "test_name": "Malformed Update 1",
       "passed": true,
       "details": "Input: Update state: =value",
-      "timestamp": "2025-08-25T15:51:43.966347"
+      "timestamp": "2025-08-25T21:35:03.764301"
     },
     {
       "test_name": "Malformed Update 2",
       "passed": true,
       "details": "Input: Update state: key=",
-      "timestamp": "2025-08-25T15:51:43.967353"
+      "timestamp": "2025-08-25T21:35:03.764301"
     },
     {
       "test_name": "Malformed Update 3",
       "passed": true,
       "details": "Input: Update state: key value",
-      "timestamp": "2025-08-25T15:51:43.968354"
+      "timestamp": "2025-08-25T21:35:03.764301"
     },
     {
       "test_name": "Malformed Update 4",
       "passed": true,
       "details": "Input: Update state: key=value extra",
-      "timestamp": "2025-08-25T15:51:43.969355"
+      "timestamp": "2025-08-25T21:35:03.764301"
     },
     {
       "test_name": "Malformed Update 5",
       "passed": true,
       "details": "Input: Update state:",
-      "timestamp": "2025-08-25T15:51:43.970349"
+      "timestamp": "2025-08-25T21:35:03.764301"
     }
   ],
-  "timestamp": "2025-08-25T15:51:43.972351"
+  "timestamp": "2025-08-25T21:35:03.765302"
 }
