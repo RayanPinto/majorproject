@@ -75,30 +75,60 @@ def display_state(session_service, app_name: str, user_id: str, session_id: str,
             print(f"{Colors.RED}Error: Session not found{Colors.RESET}")
             return
         
-        current_state = session.state.get("current_state", {})
-        json_inputs = session.state.get("json_inputs", [])
+        # Get behavioral data from new structure
+        current_behavior = session.state.get("current_behavior", {})
+        behavioral_data = session.state.get("behavioral_data", [])
         last_update = session.state.get("last_update", "Never")
         user_queries = session.state.get("user_queries", [])
+        candidate_info = session.state.get("candidate_info", {})
         
         # Create main state table
         print(f"\n{Colors.BOLD}{Colors.BG_GREEN}{Colors.WHITE} {context} {Colors.RESET}")
         print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
         
-        # Current State Table
-        if current_state:
-            print(create_table(current_state, "Current State Data"))
+        # Display candidate info if available
+        if candidate_info.get("candidate_id"):
+            candidate_table = {
+                "Candidate ID": candidate_info.get("candidate_id", "Unknown"),
+                "Session ID": candidate_info.get("session_id", "Unknown"),
+                "Interview Start": candidate_info.get("interview_start", "Unknown")
+            }
+            print(create_table(candidate_table, "Candidate Information"))
+            print()
+        
+        # Display current behavioral state
+        if current_behavior.get("behavior_profile"):
+            behavior_profile = current_behavior["behavior_profile"]
+            behavior_table = {
+                "Confidence Level": f"{behavior_profile.get('confidence_level', 0):.2f}",
+                "Engagement Level": f"{behavior_profile.get('engagement_level', 0):.2f}",
+                "Stress Level": f"{behavior_profile.get('stress_level', 0):.2f}",
+                "Emotional Valence": behavior_profile.get('emotional_valence', 'unknown').title()
+            }
+            print(create_table(behavior_table, "Current Behavioral State"))
         else:
-            print(f"{Colors.GRAY}No current state data available{Colors.RESET}")
+            print(f"{Colors.GRAY}No behavioral data available{Colors.RESET}")
         
         # Statistics Table
         stats = {
-            "JSON Inputs": f"{len(json_inputs)} entries",
+            "Behavioral Data Points": f"{len(behavioral_data)} entries",
             "User Queries": f"{len(user_queries)} queries",
             "Last Update": last_update,
             "Session ID": session_id[:8] + "...",
             "User ID": user_id
         }
         print(create_table(stats, "Session Statistics"))
+        
+        # Display recent behavioral data
+        if behavioral_data:
+            print(f"\n{Colors.BOLD}{Colors.BG_MAGENTA}{Colors.WHITE} Recent Behavioral Data {Colors.RESET}")
+            for i, entry in enumerate(behavioral_data[-3:], 1):
+                timestamp = entry.get('timestamp', 'Unknown')
+                behavior_data_entry = entry.get('behavior_data', {})
+                metadata = behavior_data_entry.get('metadata', {})
+                candidate_id = metadata.get('candidate_id', 'Unknown')
+                print(f"{Colors.CYAN}{i}.{Colors.RESET} {timestamp}")
+                print(f"   {Colors.GRAY}Candidate: {candidate_id}{Colors.RESET}")
         
         # Recent Queries Table (last 5)
         if user_queries:
@@ -173,32 +203,52 @@ def _format_seconds(sec: float) -> str:
         return str(sec)
 
 def summarize_behavior_from_state(session_state: Dict[str, Any], max_items: int = 6) -> List[str]:
-    """Create concise behavior lines from alerts and active span."""
-    alerts: List[Dict[str, Any]] = session_state.get("alerts", [])
-    aggregates: Dict[str, Any] = session_state.get("aggregates", {})
+    """Create concise behavior lines from behavioral data and insights."""
+    behavioral_data: List[Dict[str, Any]] = session_state.get("behavioral_data", [])
+    behavioral_insights: Dict[str, Any] = session_state.get("behavioral_insights", {})
+    current_behavior: Dict[str, Any] = session_state.get("current_behavior", {})
     lines: List[str] = []
 
-    active = aggregates.get("active_span")
-    if active and isinstance(active, dict) and all(k in active for k in ("label", "t_start", "t_end")):
-        lbl = active.get("label", "unknown")
-        t0 = _format_seconds(active.get("t_start", 0.0))
-        t1 = _format_seconds(active.get("t_end", 0.0))
-        lines.append(f"Currently {lbl} from {t0} to {t1} (ongoing)")
+    # Show current behavioral state
+    if current_behavior.get("behavior_profile"):
+        behavior_profile = current_behavior["behavior_profile"]
+        confidence = behavior_profile.get("confidence_level", 0)
+        engagement = behavior_profile.get("engagement_level", 0)
+        stress = behavior_profile.get("stress_level", 0)
+        valence = behavior_profile.get("emotional_valence", "unknown")
+        
+        lines.append(f"Current: {valence.title()} (Conf: {confidence:.2f}, Eng: {engagement:.2f}, Stress: {stress:.2f})")
 
-    closed = [a for a in alerts if a.get("kind") == "emotion_span"]
-    closed = sorted(closed, key=lambda x: x.get("t_end", 0.0), reverse=True)
-    for a in closed[:max_items]:
-        lbl = a.get("label", "unknown")
-        t0 = _format_seconds(a.get("t_start", 0.0))
-        t1 = _format_seconds(a.get("t_end", 0.0))
-        avg = a.get("avg_score")
-        if isinstance(avg, (int, float)):
-            lines.append(f"{lbl} from {t0} to {t1} (avg {avg:.2f})")
-        else:
-            lines.append(f"{lbl} from {t0} to {t1}")
+    # Show behavioral insights
+    if behavioral_insights.get("emotional_pattern"):
+        lines.append(f"Pattern: {behavioral_insights['emotional_pattern']}")
+    
+    if behavioral_insights.get("confidence_pattern"):
+        lines.append(f"Confidence: {behavioral_insights['confidence_pattern']}")
+
+    # Show recent behavioral data points
+    if behavioral_data:
+        recent_data = behavioral_data[-max_items:]
+        for entry in recent_data:
+            timestamp = entry.get("timestamp", "Unknown")
+            behavior_data_entry = entry.get("behavior_data", {})
+            metadata = behavior_data_entry.get("metadata", {})
+            candidate_id = metadata.get("candidate_id", "Unknown")
+            behavior_profile = behavior_data_entry.get("behavior_profile", {})
+            valence = behavior_profile.get("emotional_valence", "unknown")
+            
+            # Format timestamp for display
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                time_str = dt.strftime("%H:%M:%S")
+            except:
+                time_str = timestamp[:8] if len(timestamp) > 8 else timestamp
+            
+            lines.append(f"{time_str}: {valence.title()} ({candidate_id})")
 
     if not lines:
-        return ["No behavior spans detected yet."]
+        return ["No behavioral data available yet."]
     return lines
 
 def _pad_or_trim(text: str, width: int) -> str:
@@ -216,17 +266,29 @@ def render_two_column_dashboard(session_service, app_name: str, user_id: str, se
         print(f"{Colors.RED}Error: Session not found{Colors.RESET}")
         return
 
-    # Prepare data
-    cs = session.state.get("current_state", {})
+    # Prepare behavioral data
+    current_behavior = session.state.get("current_behavior", {})
+    behavioral_data = session.state.get("behavioral_data", [])
+    candidate_info = session.state.get("candidate_info", {})
+    
     left_rows = []
-    # Focus on key fields and live stats
+    # Focus on behavioral metrics and live stats
     left_rows.append(("Last Update", str(session.state.get("last_update", "Never"))))
-    left_rows.append(("Last Ingest", str(session.state.get("last_ingest_at", "Never"))))
-    if "last_label" in cs:
-        left_rows.append(("Last Label", str(cs.get("last_label"))))
-    if "last_label_score" in cs:
-        left_rows.append(("Label Score", str(cs.get("last_label_score"))))
-    left_rows.append(("Timeline Events", str(len(session.state.get("timeline", [])))))
+    left_rows.append(("Last Ingest", str(session.state.get("last_behavior_ingest", "Never"))))
+    
+    if candidate_info.get("candidate_id"):
+        left_rows.append(("Candidate", str(candidate_info.get("candidate_id", "Unknown"))))
+    
+    if current_behavior.get("behavior_profile"):
+        behavior_profile = current_behavior["behavior_profile"]
+        confidence = behavior_profile.get("confidence_level", 0)
+        engagement = behavior_profile.get("engagement_level", 0)
+        stress = behavior_profile.get("stress_level", 0)
+        left_rows.append(("Confidence", f"{confidence:.2f}"))
+        left_rows.append(("Engagement", f"{engagement:.2f}"))
+        left_rows.append(("Stress", f"{stress:.2f}"))
+    
+    left_rows.append(("Data Points", str(len(behavioral_data))))
     left_rows.append(("Alerts", str(len(session.state.get("alerts", [])))))
 
     behavior_lines = summarize_behavior_from_state(session.state, max_items=8)
@@ -311,14 +373,14 @@ async def call_agent_async(runner, user_id, session_id, query):
         agent_name = None
 
         try:
-            async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
-                if event.author:
-                    agent_name = event.author
-
-                # Process agent response using reference pattern
-                response = await process_agent_response(event)
-                if response:
-                    final_response_text = response
+            # Bypass agent communication for now and use direct behavioral analysis
+            session = runner.session_service.get_session(app_name=runner.app_name, user_id=user_id, session_id=session_id)
+            if session:
+                # Use direct behavioral analysis instead of agent communication
+                from manager.sub_agents.conversational_agent import handle_conversational_query
+                final_response_text = handle_conversational_query(query, session.state)
+            else:
+                final_response_text = "Session not found for analysis."
                     
         except Exception as e:
             display_error(f"Agent communication error: {e}", "Communication Error")
@@ -343,7 +405,7 @@ async def call_agent_async(runner, user_id, session_id, query):
         display_error(f"Error during agent run: {e}", "Agent Error")
 
 def process_state_updates(session_service, app_name: str, user_id: str, session_id: str, query: str, response: str):
-    """Process state updates based on user query and agent response"""
+    """Process behavioral state updates based on user query and agent response"""
     try:
         session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
         
@@ -351,43 +413,173 @@ def process_state_updates(session_service, app_name: str, user_id: str, session_
             display_error("Session not found", "Warning")
             return
         
-        # Initialize state if needed
-        if "current_state" not in session.state:
-            session.state["current_state"] = {}
-        if "json_inputs" not in session.state:
-            session.state["json_inputs"] = []
+        # Update last update timestamp
         if "last_update" not in session.state:
             session.state["last_update"] = datetime.now().isoformat()
-        
-        # Process JSON processing commands
-        if query.lower().startswith("process this json:"):
-            json_part = query[len("process this json:"):].strip()
-            try:
-                json_data = json.loads(json_part)
-                session.state["current_state"] = json_data
-                session.state["json_inputs"].append(json_data)
-                session.state["last_update"] = datetime.now().isoformat()
-                display_success("JSON data processed and state updated successfully", "JSON Processing")
-            except json.JSONDecodeError:
-                display_error("Invalid JSON format", "JSON Error")
-        
-        # Process state update commands
-        elif "update" in query.lower() or "change" in query.lower() or "modify" in query.lower():
-            # Extract field and value from update command
-            update_pattern = r"update\s+(?:the\s+)?(\w+)\s+(?:from\s+\w+\s+)?to\s+(\w+)"
-            match = re.search(update_pattern, query.lower())
-            if match:
-                field = match.group(1)
-                new_value = match.group(2)
-                if field in session.state["current_state"]:
-                    session.state["current_state"][field] = new_value
-                    session.state["last_update"] = datetime.now().isoformat()
-                    display_success(f"Updated {field} to {new_value}", "State Update")
-                else:
-                    display_error(f"Field '{field}' not found in current state", "Update Error")
+        else:
+            session.state["last_update"] = datetime.now().isoformat()
         
         # Update session
         session_service.update_session(app_name, user_id, session_id, session.state)
         
     except Exception as e:
         display_error(f"Error processing state updates: {e}", "State Update Error")
+
+def display_behavioral_analysis(session_service, app_name: str, user_id: str, session_id: str):
+    """Display comprehensive behavioral analysis dashboard."""
+    try:
+        session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+        if not session:
+            print(f"{Colors.RED}❌ No session found for behavioral analysis{Colors.RESET}")
+            return
+
+        state = session.state
+        current_behavior = state.get("current_behavior", {})
+        behavioral_insights = state.get("behavioral_insights", {})
+
+        print(f"\n{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE} 🤖 Behavioral Analysis Dashboard {Colors.RESET}")
+        print(f"{Colors.CYAN}{'═' * 60}{Colors.RESET}")
+
+        # Candidate Info
+        candidate_info = state.get("candidate_info", {})
+        if candidate_info.get("candidate_id"):
+            print(f"{Colors.BOLD}{Colors.GREEN}👤 Candidate:{Colors.RESET} {candidate_info['candidate_id']}")
+            if candidate_info.get("session_id"):
+                print(f"{Colors.BOLD}{Colors.GREEN}📋 Session:{Colors.RESET} {candidate_info['session_id']}")
+            print()
+
+        # Behavioral Metrics
+        behavior_profile = current_behavior.get("behavior_profile", {})
+        if behavior_profile:
+            print(f"{Colors.BOLD}{Colors.YELLOW}📈 Behavioral Metrics:{Colors.RESET}")
+            confidence = behavior_profile.get("confidence_level", 0)
+            engagement = behavior_profile.get("engagement_level", 0)
+            stress = behavior_profile.get("stress_level", 0)
+            valence = behavior_profile.get("emotional_valence", "unknown")
+
+            # Visual bars for metrics
+            def create_bar(value, max_val=1.0, length=20):
+                filled = int((value / max_val) * length)
+                bar = "█" * filled + "░" * (length - filled)
+                return bar
+
+            print(f"   🎯 Confidence: [{create_bar(confidence)}] {confidence:.2f}")
+            print(f"   🔥 Engagement: [{create_bar(engagement)}] {engagement:.2f}")
+            print(f"   😰 Stress: [{create_bar(stress)}] {stress:.2f}")
+            print(f"   💭 Emotional State: {Colors.MAGENTA}{valence.title()}{Colors.RESET}")
+            print()
+
+        # Facial Expressions
+        video_features = current_behavior.get("video_features", {})
+        facial_expressions = video_features.get("facial_expressions", [])
+        if facial_expressions:
+            print(f"{Colors.BOLD}{Colors.CYAN}😊 Facial Expressions:{Colors.RESET}")
+            for expr in facial_expressions[-3:]:  # Show last 3
+                time_sec = expr.get("time_sec", 0)
+                expression = expr.get("expression", "unknown")
+                confidence = expr.get("confidence", 0)
+                print(f"   {time_sec:.1f}s: {Colors.GREEN}{expression}{Colors.RESET} ({confidence:.2f})")
+            print()
+
+        # Speech Analysis
+        audio_features = current_behavior.get("audio_features", {})
+        speech_segments = audio_features.get("speech_segments", [])
+        if speech_segments:
+            print(f"{Colors.BOLD}{Colors.GRAY}🎤 Recent Speech:{Colors.RESET}")
+            for segment in speech_segments[-2:]:  # Show last 2
+                start = segment.get("start_sec", 0)
+                text = segment.get("text", "")[:50]  # Truncate long text
+                print(f"   {start:.1f}s: {Colors.WHITE}\"{text}...\"{Colors.RESET}")
+            print()
+
+        # Notable Observations
+        observations = behavior_profile.get("notable_observations", [])
+        if observations:
+            print(f"{Colors.BOLD}{Colors.RED}🔍 Key Observations:{Colors.RESET}")
+            for obs in observations[:3]:
+                print(f"   • {Colors.GRAY}{obs}{Colors.RESET}")
+            print()
+
+        # Behavioral Insights
+        if behavioral_insights:
+            print(f"{Colors.BOLD}{Colors.MAGENTA}💡 Behavioral Insights:{Colors.RESET}")
+            pattern = behavioral_insights.get("emotional_pattern", "")
+            if pattern:
+                print(f"   📊 Pattern: {Colors.CYAN}{pattern}{Colors.RESET}")
+
+            confidence_trend = behavioral_insights.get("confidence_trend", [])
+            if confidence_trend:
+                avg_confidence = sum(confidence_trend) / len(confidence_trend)
+                print(f"   📈 Avg Confidence Trend: {Colors.GREEN}{avg_confidence:.2f}{Colors.RESET}")
+
+        print(f"{Colors.CYAN}{'═' * 60}{Colors.RESET}")
+
+    except Exception as e:
+        print(f"{Colors.RED}❌ Error displaying behavioral analysis: {e}{Colors.RESET}")
+
+def display_emotional_timeline(session_service, app_name: str, user_id: str, session_id: str):
+    """Display emotional changes over time."""
+    try:
+        session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+        if not session:
+            return
+
+        behavior_timeline = session.state.get("behavior_timeline", [])
+        if not behavior_timeline:
+            print(f"{Colors.GRAY}No emotional timeline data available{Colors.RESET}")
+            return
+
+        print(f"\n{Colors.BOLD}{Colors.BG_MAGENTA}{Colors.WHITE} 💭 Emotional Timeline {Colors.RESET}")
+        print(f"{Colors.MAGENTA}{'─' * 50}{Colors.RESET}")
+
+        for entry in behavior_timeline[-5:]:  # Show last 5 entries
+            timestamp = entry.get("timestamp", "Unknown")
+            valence = entry.get("emotional_valence", "neutral")
+            confidence = entry.get("confidence_level", 0)
+
+            emoji_map = {
+                "positive": "😊",
+                "negative": "😔",
+                "neutral": "😐"
+            }
+            emoji = emoji_map.get(valence.lower(), "😐")
+
+            print(f"{Colors.WHITE}{timestamp}{Colors.RESET} | {emoji} {Colors.GREEN}{valence.title()}{Colors.RESET} | 🎯 {confidence:.2f}")
+
+        print(f"{Colors.MAGENTA}{'─' * 50}{Colors.RESET}")
+
+    except Exception as e:
+        print(f"{Colors.RED}Error displaying emotional timeline: {e}{Colors.RESET}")
+
+def clear_screen():
+    print("\033[2J\033[H", end="")
+
+def show_loading_spinner(message: str = "Processing..."):
+    import sys
+    import time
+
+    spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+    i = 0
+
+    while True:
+        sys.stdout.write(f"\r{Colors.CYAN}{spinner[i]}{Colors.RESET} {message}")
+        sys.stdout.flush()
+        time.sleep(0.1)
+        i = (i + 1) % len(spinner)
+
+        if not hasattr(show_loading_spinner, 'running'):
+            break
+
+    sys.stdout.write("\r" + " " * (len(message) + 2) + "\r")
+    sys.stdout.flush()
+
+def start_loading_spinner(message: str = "Processing..."):
+    import threading
+    show_loading_spinner.running = True
+    spinner_thread = threading.Thread(target=show_loading_spinner, args=(message,))
+    spinner_thread.daemon = True
+    spinner_thread.start()
+    return spinner_thread
+
+def stop_loading_spinner():
+    show_loading_spinner.running = False

@@ -97,18 +97,8 @@ def ingest_event(session_service, app_name: str, user_id: str, session_id: str, 
     session.state["timeline"].append(ev)
     session.state["timeline"].sort(key=lambda x: (x.get("t_start", 0), x.get("t_end", 0)))
 
-    # Optionally reflect key features into current_state (light merge)
-    try:
-        label = _get_event_label(ev)
-        if label:
-            session.state.setdefault("current_state", {})
-            session.state["current_state"]["last_label"] = label
-        score = _get_event_score(ev)
-        if score is not None:
-            session.state.setdefault("current_state", {})
-            session.state["current_state"]["last_label_score"] = score
-    except Exception:
-        pass
+    # Behavioral analysis system - no need for old state structure
+    pass
 
     now = _now_iso()
     session.state["last_update"] = now
@@ -122,19 +112,122 @@ def ingest_event(session_service, app_name: str, user_id: str, session_id: str, 
 
 def ingest_from_model_output(session_service, app_name: str, user_id: str, session_id: str, payload: Dict[str, Any]) -> bool:
     """
-    Convenience wrapper for direct model JSON payloads.
-    Accepts already-fused payloads that include t_start/t_end and features.
-    Falls back to best-effort extraction if fields are named slightly differently.
+    Enhanced wrapper for behavioral analysis JSON payloads.
+    Handles multimodal behavioral data with timestamp correlation.
     """
     if not isinstance(payload, dict):
         return False
-    event = dict(payload)
-    # Best-effort normalization
-    if "start" in event and "t_start" not in event:
-        event["t_start"] = event.get("start")
-    if "end" in event and "t_end" not in event:
-        event["t_end"] = event.get("end")
-    return ingest_event(session_service, app_name, user_id, session_id, event)
+
+    session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+    if not session:
+        return False
+
+    # Ensure behavioral state structures exist
+    _ensure_behavioral_state_structures(session.state)
+
+    # Process behavioral data
+    current_behavior = payload.copy()
+    metadata = current_behavior.get("metadata", {})
+
+    # Update candidate info if provided
+    if metadata.get("candidate_id"):
+        session.state.setdefault("candidate_info", {})
+        session.state["candidate_info"]["candidate_id"] = metadata["candidate_id"]
+        session.state["candidate_info"]["session_id"] = metadata.get("session_id", "")
+        session.state["candidate_info"]["interview_start"] = _now_iso()
+
+    # Store current behavioral data
+    session.state["current_behavior"] = current_behavior
+
+    # Add to behavioral timeline with timestamp correlation
+    behavior_entry = {
+        "timestamp": _now_iso(),
+        "behavior_data": current_behavior,
+        "ingest_time": _now_iso()
+    }
+
+    session.state.setdefault("behavioral_data", [])
+    session.state["behavioral_data"].append(behavior_entry)
+
+    # Keep only last 50 entries to prevent memory issues
+    if len(session.state["behavioral_data"]) > 50:
+        session.state["behavioral_data"] = session.state["behavioral_data"][-50:]
+
+    # Update behavioral insights
+    _update_behavioral_insights(session.state)
+
+    # Update timestamps
+    now = _now_iso()
+    session.state["last_update"] = now
+    session.state["last_behavior_ingest"] = now
+
+    session_service.update_session(app_name, user_id, session_id, session.state)
+    return True
+
+def _ensure_behavioral_state_structures(state: Dict[str, Any]) -> None:
+    """Ensure behavioral analysis state structures exist."""
+    if "candidate_info" not in state:
+        state["candidate_info"] = {}
+    if "behavioral_data" not in state:
+        state["behavioral_data"] = []
+    if "current_behavior" not in state:
+        state["current_behavior"] = {}
+    if "behavioral_insights" not in state:
+        state["behavioral_insights"] = {}
+    if "behavior_timeline" not in state:
+        state["behavior_timeline"] = []
+    if "alerts" not in state:
+        state["alerts"] = []
+
+def _update_behavioral_insights(state: Dict[str, Any]) -> None:
+    """Update behavioral insights based on accumulated data."""
+    behavioral_data = state.get("behavioral_data", [])
+    if not behavioral_data:
+        return
+
+    insights = state.setdefault("behavioral_insights", {})
+
+    # Analyze confidence trends
+    confidence_values = []
+    for entry in behavioral_data[-10:]:  # Last 10 entries
+        behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
+        confidence = behavior_profile.get("confidence_level", 0)
+        if confidence > 0:
+            confidence_values.append(confidence)
+
+    if confidence_values:
+        avg_confidence = sum(confidence_values) / len(confidence_values)
+        insights["confidence_trend"] = confidence_values[-5:]  # Last 5 confidence values
+        insights["avg_confidence"] = avg_confidence
+
+        # Determine confidence pattern
+        if len(confidence_values) >= 3:
+            if confidence_values[-1] > confidence_values[0] + 0.1:
+                insights["confidence_pattern"] = "increasing"
+            elif confidence_values[-1] < confidence_values[0] - 0.1:
+                insights["confidence_pattern"] = "decreasing"
+            else:
+                insights["confidence_pattern"] = "stable"
+
+    # Analyze emotional patterns
+    valence_counts = {"positive": 0, "negative": 0, "neutral": 0}
+    for entry in behavioral_data[-10:]:
+        behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
+        valence = behavior_profile.get("emotional_valence", "neutral")
+        if valence in valence_counts:
+            valence_counts[valence] += 1
+
+    most_common_valence = max(valence_counts, key=valence_counts.get)
+    insights["dominant_emotion"] = most_common_valence
+    insights["emotional_distribution"] = valence_counts
+
+    # Generate simple emotional pattern description
+    if valence_counts["positive"] > valence_counts["negative"] + 2:
+        insights["emotional_pattern"] = "predominantly positive"
+    elif valence_counts["negative"] > valence_counts["positive"] + 2:
+        insights["emotional_pattern"] = "predominantly negative"
+    else:
+        insights["emotional_pattern"] = "mixed emotional state"
 
 def mark_question_window(session_service, app_name: str, user_id: str, session_id: str, question_id: str, t_start: Optional[float] = None, t_end: Optional[float] = None) -> None:
     """Update question window timing in state."""

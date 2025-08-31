@@ -7,14 +7,13 @@ from uuid import uuid4
 from dotenv import load_dotenv
 from typing import Dict, Any, Optional, List
 
-from manager.agent import state_manager_agent
 from manager.sub_agents.conversational_agent import conversational_agent
 from google.adk.runners import Runner
 from pymongo import MongoClient
 from google.adk.sessions import InMemorySessionService
 from mongodb_session_service import MongoDBSessionService
 
-from utils import add_user_query_to_history, call_agent_async
+from utils import add_user_query_to_history, call_agent_async, display_behavioral_analysis, display_emotional_timeline
 from manager.tools.tools import ingest_from_model_output, ensure_session_structures
 
 # ===== ERROR HANDLING CLASSES =====
@@ -203,29 +202,58 @@ SAMPLE_JSON_FILE = "sample_json_output.json"  # Assume this file exists with str
 
 # ===== PART 2: Define Initial State =====
 initial_state = {
-    "user_name": "Developer",
-    "interaction_history": [],
-    "user_queries": [],
-    "json_inputs": [],  # Store raw input JSONs for reference
-    "current_state": {  # Default template with empty values
-        "_id": "",
-        "user_id": "",
-        "jwt": ""
+    "candidate_info": {
+        "candidate_id": "",
+        "session_id": "",
+        "interview_start": None
     },
-    "last_update": None,  # Timestamp of last state update
-    "last_ingest_at": None,  # Timestamp when a model JSON reached ADK
-    "timestamps": [],
-    # Real-time structures
-    "timeline": [],               # list of fused events with t_start/t_end/features/arrival_ts
-    "aggregates": {"last_processed_timeline_index": -1},
-    "alerts": [],                 # structured alerts like emotion spans; textualization by conversational agent only
-    "question_windows": {},       # question_id -> { t_start, t_end }
+    "behavioral_data": [],
+    "current_behavior": {
+        "metadata": {
+            "candidate_id": "",
+            "session_id": "",
+            "timestamp": "",
+            "duration_sec": 0
+        },
+        "video_features": {
+            "frame_rate": 0,
+            "facial_expressions": [],
+            "gaze_tracking": [],
+            "head_movements": [],
+            "body_language": {}
+        },
+        "audio_features": {
+            "speech_segments": [],
+            "prosody": {},
+            "pauses": [],
+            "voice_tone": "",
+            "disfluencies": []
+        },
+        "behavior_profile": {
+            "confidence_level": 0.0,
+            "engagement_level": 0.0,
+            "stress_level": 0.0,
+            "emotional_valence": "",
+            "notable_observations": []
+        }
+    },
+    "behavior_timeline": [],
+    "behavioral_insights": {
+        "emotional_pattern": "",
+        "confidence_trend": [],
+        "stress_indicators": [],
+        "engagement_peaks": []
+    },
+    "last_update": None,
+    "last_behavior_ingest": None,
+    "question_windows": {},
+    "alerts": []
 }
 
 async def main_async():
     # Setup constants
-    APP_NAME = "Stateful JSON Assistant"
-    USER_ID = "developer_user"
+    APP_NAME = "Behavioral Analysis System"
+    USER_ID = "interviewer_user"
 
     # ===== PART 3: Session Management - Load from Mongo or Create =====
     # Try to load the most recent session for this app/user from MongoDB
@@ -257,12 +285,9 @@ async def main_async():
     ensure_session_structures(session_service, APP_NAME, USER_ID, SESSION_ID)
 
     # ===== PART 4: Agent Runner Setup =====
-    # Use conversational agent as root by default to avoid LLM routing loops.
-    # Set ROOT_AGENT=manager to use the manager/orchestrator instead.
-    ROOT_AGENT = os.getenv("ROOT_AGENT", "conversational").lower().strip()
-    root_agent = state_manager_agent if ROOT_AGENT == "manager" else conversational_agent
+    # Direct routing to conversational agent for behavioral analysis
     runner = Runner(
-        agent=root_agent,
+        agent=conversational_agent,
         app_name=APP_NAME,
         session_service=session_service,
     )
@@ -271,9 +296,12 @@ async def main_async():
     print(f"Session ready: {SESSION_ID}")
 
     # ===== PART 5: Interactive Loop =====
-    print("\nWelcome to Coding Assistant Chat!")
-    print("Ask coding doubts or request code generation.")
-    print("Type 'exit' or 'quit' to end the conversation.\n")
+    print("\n🤖 Behavioral Analysis Assistant")
+    print("═" * 50)
+    print("📊 Real-time behavioral analysis during interviews")
+    print("💬 Ask about candidate behavior, emotions, and patterns")
+    print("📝 Commands: 'simulate json', 'analyze behavior', 'show insights'")
+    print("❌ Type 'exit' or 'quit' to end the session\n")
 
     while True:
         user_input = input("You: ")
@@ -285,33 +313,66 @@ async def main_async():
         # Save to history
         add_user_query_to_history(session_service, APP_NAME, USER_ID, SESSION_ID, user_input)
 
-        # Simulate receiving JSON output for testing (e.g., if user says "simulate json")
+        # Behavioral Analysis Commands
         if "simulate json" in user_input.lower():
             try:
                 with open(SAMPLE_JSON_FILE, 'r') as f:
                     json_data = json.load(f)
-                # Direct real-time ingestion without free-form query
                 ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, json_data)
-                print(f"Ingested event: {ingested}")
-                # Optionally, ask conversational agent to summarize recent behavior
-                await call_agent_async(runner, USER_ID, SESSION_ID, "give me a summary of recent behavior")
+                print(f"📊 Behavioral data ingested: {ingested}")
+                await call_agent_async(runner, USER_ID, SESSION_ID, "analyze the candidate's current behavioral state and provide insights")
             except Exception as e:
-                print(f"Error loading sample JSON: {e}")
+                print(f"❌ Error loading behavioral data: {e}")
+
         elif "simulate event" in user_input.lower():
-            # Accept a single-line JSON event pasted after the command, e.g.,
-            # simulate event {"t_start":0.0,"t_end":2.5, ...}
             try:
                 match = re.search(r"simulate\s+event\s+(\{.*\})", user_input, re.IGNORECASE | re.DOTALL)
                 if match:
                     payload_str = match.group(1)
                     payload = json.loads(payload_str)
                     ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, payload)
-                    print(f"Ingested event: {ingested}")
-                    await call_agent_async(runner, USER_ID, SESSION_ID, "summarize recent behavior")
+                    print(f"📊 Behavioral event ingested: {ingested}")
+                    await call_agent_async(runner, USER_ID, SESSION_ID, "analyze this behavioral data and identify key patterns")
                 else:
-                    print("No JSON payload found after 'simulate event'.")
+                    print("❌ No behavioral data found after 'simulate event'.")
             except Exception as e:
-                print(f"Error parsing simulate event payload: {e}")
+                print(f"❌ Error parsing behavioral data: {e}")
+
+        elif "analyze behavior" in user_input.lower():
+            await call_agent_async(runner, USER_ID, SESSION_ID, "provide a comprehensive behavioral analysis of the candidate including emotional patterns, confidence levels, and stress indicators")
+
+        elif "show insights" in user_input.lower():
+            await call_agent_async(runner, USER_ID, SESSION_ID, "show me the key behavioral insights and notable observations from the interview")
+
+        elif "emotional pattern" in user_input.lower():
+            await call_agent_async(runner, USER_ID, SESSION_ID, "analyze the candidate's emotional patterns throughout the interview and identify any significant changes")
+
+        elif "confidence level" in user_input.lower():
+            await call_agent_async(runner, USER_ID, SESSION_ID, "assess the candidate's confidence level and how it changed during different parts of the interview")
+
+        elif "show dashboard" in user_input.lower() or "behavioral dashboard" in user_input.lower():
+            display_behavioral_analysis(session_service, APP_NAME, USER_ID, SESSION_ID)
+
+        elif "emotional timeline" in user_input.lower() or "timeline" in user_input.lower():
+            display_emotional_timeline(session_service, APP_NAME, USER_ID, SESSION_ID)
+
+        elif "debug state" in user_input.lower():
+            # Debug command to see what's actually in the state
+            session = session_service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID)
+            if session:
+                print("🔍 **DEBUG: Current Session State**")
+                print(f"Keys in state: {list(session.state.keys())}")
+                if "current_behavior" in session.state:
+                    current_behavior = session.state["current_behavior"]
+                    print(f"Current behavior keys: {list(current_behavior.keys())}")
+                    if "behavior_profile" in current_behavior:
+                        profile = current_behavior["behavior_profile"]
+                        print(f"Behavior profile: {profile}")
+                if "behavioral_data" in session.state:
+                    print(f"Behavioral data count: {len(session.state['behavioral_data'])}")
+                print("🔍 **End Debug**")
+            else:
+                print("❌ No session found for debugging")
         else:
             # Normal agent call
             await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
@@ -326,11 +387,35 @@ async def main_async():
         session_id=SESSION_ID
     )
     
-    print("\nFinal Session State:")
-    for key, value in final_session.state.items():
-        print(f"{key}: {value}")
-    
-    print("Ending conversation. Your data has been saved to MongoDB Atlas.")
+    print("\n📊 **Final Behavioral Analysis Summary**")
+    print("═" * 50)
+
+    behavioral_data_count = len(final_session.state.get("behavioral_data", []))
+    current_behavior = final_session.state.get("current_behavior", {})
+
+    print(f"📝 Total behavioral data points processed: {behavioral_data_count}")
+
+    if current_behavior.get("metadata"):
+        candidate_id = current_behavior["metadata"].get("candidate_id", "Unknown")
+        session_id = current_behavior["metadata"].get("session_id", "Unknown")
+        print(f"👤 Candidate: {candidate_id}")
+        print(f"📋 Session: {session_id}")
+
+    behavior_profile = current_behavior.get("behavior_profile", {})
+    if behavior_profile:
+        confidence = behavior_profile.get("confidence_level", 0)
+        engagement = behavior_profile.get("engagement_level", 0)
+        stress = behavior_profile.get("stress_level", 0)
+        valence = behavior_profile.get("emotional_valence", "unknown")
+
+        print("📈 Final Behavioral Metrics:")
+        print(f"   🎯 Confidence Level: {confidence:.2f}")
+        print(f"   🔥 Engagement Level: {engagement:.2f}")
+        print(f"   😰 Stress Level: {stress:.2f}")
+        print(f"   💭 Emotional State: {valence.title()}")
+
+    print("✅ Behavioral analysis complete! Data saved to MongoDB Atlas.")
+    print("💡 Use 'show dashboard' to view detailed analysis anytime.")
     
     # Close the session service
     session_service.close()
