@@ -8,12 +8,14 @@ from dotenv import load_dotenv
 from typing import Dict, Any, Optional, List
 
 from manager.agent import state_manager_agent
+from manager.sub_agents.conversational_agent import conversational_agent
 from google.adk.runners import Runner
 from pymongo import MongoClient
 from google.adk.sessions import InMemorySessionService
 from mongodb_session_service import MongoDBSessionService
 
 from utils import add_user_query_to_history, call_agent_async
+from manager.tools.tools import ingest_from_model_output, ensure_session_structures
 
 # ===== ERROR HANDLING CLASSES =====
 
@@ -211,7 +213,13 @@ initial_state = {
         "jwt": ""
     },
     "last_update": None,  # Timestamp of last state update
+    "last_ingest_at": None,  # Timestamp when a model JSON reached ADK
     "timestamps": [],
+    # Real-time structures
+    "timeline": [],               # list of fused events with t_start/t_end/features/arrival_ts
+    "aggregates": {"last_processed_timeline_index": -1},
+    "alerts": [],                 # structured alerts like emotion spans; textualization by conversational agent only
+    "question_windows": {},       # question_id -> { t_start, t_end }
 }
 
 async def main_async():
@@ -245,9 +253,16 @@ async def main_async():
         state=state_to_use,
     )
 
+    # Ensure real-time structures exist
+    ensure_session_structures(session_service, APP_NAME, USER_ID, SESSION_ID)
+
     # ===== PART 4: Agent Runner Setup =====
+    # Use conversational agent as root by default to avoid LLM routing loops.
+    # Set ROOT_AGENT=manager to use the manager/orchestrator instead.
+    ROOT_AGENT = os.getenv("ROOT_AGENT", "conversational").lower().strip()
+    root_agent = state_manager_agent if ROOT_AGENT == "manager" else conversational_agent
     runner = Runner(
-        agent=state_manager_agent,
+        agent=root_agent,
         app_name=APP_NAME,
         session_service=session_service,
     )
@@ -275,11 +290,28 @@ async def main_async():
             try:
                 with open(SAMPLE_JSON_FILE, 'r') as f:
                     json_data = json.load(f)
-                # Simulate passing JSON to the agent via query
-                simulated_query = f"Process this JSON: {json.dumps(json_data)}"
-                await call_agent_async(runner, USER_ID, SESSION_ID, simulated_query)
+                # Direct real-time ingestion without free-form query
+                ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, json_data)
+                print(f"Ingested event: {ingested}")
+                # Optionally, ask conversational agent to summarize recent behavior
+                await call_agent_async(runner, USER_ID, SESSION_ID, "give me a summary of recent behavior")
             except Exception as e:
                 print(f"Error loading sample JSON: {e}")
+        elif "simulate event" in user_input.lower():
+            # Accept a single-line JSON event pasted after the command, e.g.,
+            # simulate event {"t_start":0.0,"t_end":2.5, ...}
+            try:
+                match = re.search(r"simulate\s+event\s+(\{.*\})", user_input, re.IGNORECASE | re.DOTALL)
+                if match:
+                    payload_str = match.group(1)
+                    payload = json.loads(payload_str)
+                    ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, payload)
+                    print(f"Ingested event: {ingested}")
+                    await call_agent_async(runner, USER_ID, SESSION_ID, "summarize recent behavior")
+                else:
+                    print("No JSON payload found after 'simulate event'.")
+            except Exception as e:
+                print(f"Error parsing simulate event payload: {e}")
         else:
             # Normal agent call
             await call_agent_async(runner, USER_ID, SESSION_ID, user_input)

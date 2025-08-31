@@ -7,7 +7,9 @@ Enhanced with beautiful colored UI and table displays
 import json
 import re
 from datetime import datetime
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+import time
+import shutil
 
 # ANSI Color Codes for beautiful UI
 class Colors:
@@ -162,6 +164,108 @@ def add_user_query_to_history(session_service, app_name: str, user_id: str, sess
     except Exception as e:
         display_error(f"Error adding query to history: {e}", "Warning")
 
+# ===== Enhanced two-column animated dashboard =====
+
+def _format_seconds(sec: float) -> str:
+    try:
+        return f"{float(sec):.2f}s"
+    except Exception:
+        return str(sec)
+
+def summarize_behavior_from_state(session_state: Dict[str, Any], max_items: int = 6) -> List[str]:
+    """Create concise behavior lines from alerts and active span."""
+    alerts: List[Dict[str, Any]] = session_state.get("alerts", [])
+    aggregates: Dict[str, Any] = session_state.get("aggregates", {})
+    lines: List[str] = []
+
+    active = aggregates.get("active_span")
+    if active and isinstance(active, dict) and all(k in active for k in ("label", "t_start", "t_end")):
+        lbl = active.get("label", "unknown")
+        t0 = _format_seconds(active.get("t_start", 0.0))
+        t1 = _format_seconds(active.get("t_end", 0.0))
+        lines.append(f"Currently {lbl} from {t0} to {t1} (ongoing)")
+
+    closed = [a for a in alerts if a.get("kind") == "emotion_span"]
+    closed = sorted(closed, key=lambda x: x.get("t_end", 0.0), reverse=True)
+    for a in closed[:max_items]:
+        lbl = a.get("label", "unknown")
+        t0 = _format_seconds(a.get("t_start", 0.0))
+        t1 = _format_seconds(a.get("t_end", 0.0))
+        avg = a.get("avg_score")
+        if isinstance(avg, (int, float)):
+            lines.append(f"{lbl} from {t0} to {t1} (avg {avg:.2f})")
+        else:
+            lines.append(f"{lbl} from {t0} to {t1}")
+
+    if not lines:
+        return ["No behavior spans detected yet."]
+    return lines
+
+def _pad_or_trim(text: str, width: int) -> str:
+    if len(text) > width:
+        return text[: max(0, width - 3)] + "..."
+    return text + (" " * (width - len(text)))
+
+def render_two_column_dashboard(session_service, app_name: str, user_id: str, session_id: str, title: str = "Real-time Dashboard", animate: bool = True) -> None:
+    """Render a clean two-column dashboard: left=state updates, right=behavior summary.
+
+    Avoids emojis and logos; uses subtle colors and simple animations.
+    """
+    session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
+    if not session:
+        print(f"{Colors.RED}Error: Session not found{Colors.RESET}")
+        return
+
+    # Prepare data
+    cs = session.state.get("current_state", {})
+    left_rows = []
+    # Focus on key fields and live stats
+    left_rows.append(("Last Update", str(session.state.get("last_update", "Never"))))
+    left_rows.append(("Last Ingest", str(session.state.get("last_ingest_at", "Never"))))
+    if "last_label" in cs:
+        left_rows.append(("Last Label", str(cs.get("last_label"))))
+    if "last_label_score" in cs:
+        left_rows.append(("Label Score", str(cs.get("last_label_score"))))
+    left_rows.append(("Timeline Events", str(len(session.state.get("timeline", [])))))
+    left_rows.append(("Alerts", str(len(session.state.get("alerts", [])))))
+
+    behavior_lines = summarize_behavior_from_state(session.state, max_items=8)
+
+    # Terminal sizing and layout
+    term_width = shutil.get_terminal_size((120, 40)).columns
+    total_width = max(80, min(term_width, 160))
+    gutter = 4
+    col_width = (total_width - gutter) // 2
+
+    # Clear screen and draw header with a subtle pulse
+    print("\033[2J\033[H", end="")
+    border_color = Colors.CYAN
+    header = f"{Colors.BOLD}{border_color}{'=' * total_width}{Colors.RESET}"
+    print(header)
+    print(f"{Colors.BOLD}{Colors.WHITE}{title:^{total_width}}{Colors.RESET}")
+    print(header)
+
+    # Column titles
+    left_title = f"{Colors.BLUE}State Updates{Colors.RESET}"
+    right_title = f"{Colors.BLUE}Behavior Summary{Colors.RESET}"
+
+    print(_pad_or_trim(left_title, col_width) + (" " * gutter) + _pad_or_trim(right_title, col_width))
+    print(_pad_or_trim(border_color + ("-" * col_width) + Colors.RESET, col_width) + (" " * gutter) + _pad_or_trim(border_color + ("-" * col_width) + Colors.RESET, col_width))
+
+    # Compute max rows
+    max_rows = max(len(left_rows), len(behavior_lines))
+
+    for i in range(max_rows):
+        l = left_rows[i] if i < len(left_rows) else ("", "")
+        r = behavior_lines[i] if i < len(behavior_lines) else ""
+        left_text = f"{Colors.WHITE}{l[0]}{Colors.RESET}: {Colors.YELLOW}{l[1]}{Colors.RESET}" if l[0] else ""
+        line = _pad_or_trim(left_text, col_width) + (" " * gutter) + _pad_or_trim(f"{Colors.WHITE}{r}{Colors.RESET}", col_width)
+        print(line)
+        if animate:
+            time.sleep(0.03)
+
+    print(header)
+
 async def process_agent_response(event):
     """Process agent response events - from reference code"""
     print(f"Event ID: {event.id}, Author: {event.author}")
@@ -191,8 +295,12 @@ async def process_agent_response(event):
     return final_response
 
 async def call_agent_async(runner, user_id, session_id, query):
-    """Call the agent asynchronously with beautiful display - simplified approach"""
+    """Call the agent asynchronously with beautiful display - using reference pattern"""
     try:
+        # Create proper Content object using Google GenAI types (exact pattern from reference)
+        from google.genai import types
+        content = types.Content(role="user", parts=[types.Part(text=query)])
+        
         display_query_info(query)
         
         # Display state before processing
@@ -203,10 +311,6 @@ async def call_agent_async(runner, user_id, session_id, query):
         agent_name = None
 
         try:
-            # Use the exact pattern from your working reference
-            from google.genai import types
-            content = types.Content(role="user", parts=[types.Part(text=query)])
-            
             async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=content):
                 if event.author:
                     agent_name = event.author
@@ -217,19 +321,8 @@ async def call_agent_async(runner, user_id, session_id, query):
                     final_response_text = response
                     
         except Exception as e:
-            # If Content object fails, try with simple string
-            try:
-                async for event in runner.run_async(user_id=user_id, session_id=session_id, new_message=query):
-                    if event.author:
-                        agent_name = event.author
-
-                    # Process agent response using reference pattern
-                    response = await process_agent_response(event)
-                    if response:
-                        final_response_text = response
-            except Exception as e2:
-                display_error(f"Agent communication error: {e2}", "Communication Error")
-                final_response_text = "I'm having trouble connecting to the AI service right now. Your state operations are still working though!"
+            display_error(f"Agent communication error: {e}", "Communication Error")
+            final_response_text = "I'm having trouble connecting to the AI service right now. Your state operations are still working though!"
 
         # Display agent response
         if final_response_text:
@@ -242,6 +335,9 @@ async def call_agent_async(runner, user_id, session_id, query):
         
         # Display state after processing
         display_state(runner.session_service, runner.app_name, user_id, session_id, "State After Processing")
+
+        # Render concise two-column dashboard for presentation
+        render_two_column_dashboard(runner.session_service, runner.app_name, user_id, session_id)
         
     except Exception as e:
         display_error(f"Error during agent run: {e}", "Agent Error")

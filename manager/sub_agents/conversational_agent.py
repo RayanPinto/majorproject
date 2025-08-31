@@ -3,6 +3,7 @@ from google.adk.tools.agent_tool import AgentTool
 import json
 import re
 from datetime import datetime
+from typing import List, Dict, Any, Optional
 import litellm
 
 # Add RAG function
@@ -50,37 +51,95 @@ def conversational_response(user_input, session_state):
 # ... (rest unchanged)
 
 def extract_state_info(session_state):
-    """Extract current state information from session"""
+    """Extract current state information from session, including real-time fields."""
     current_state = session_state.get("current_state", {})
     json_inputs = session_state.get("json_inputs", [])
     last_update = session_state.get("last_update", "Never")
+    last_ingest_at = session_state.get("last_ingest_at", None)
+    timeline = session_state.get("timeline", [])
+    alerts = session_state.get("alerts", [])
+    aggregates = session_state.get("aggregates", {})
     
     return {
         "current_state": current_state,
         "json_inputs_count": len(json_inputs),
         "last_update": last_update,
-        "has_data": any(value for value in current_state.values())
+        "last_ingest_at": last_ingest_at,
+        "has_data": any(value for value in current_state.values()) or bool(timeline),
+        "timeline_len": len(timeline),
+        "alerts_count": len(alerts),
+        "aggregates": aggregates,
     }
 
+def _format_seconds(sec: float) -> str:
+    try:
+        return f"{float(sec):.2f}s"
+    except Exception:
+        return str(sec)
+
+def _generate_behavior_summary_from_state(session_state: Dict[str, Any], max_items: int = 5) -> str:
+    """Generate concise behavior summary from alerts and active span.
+
+    Produces lines like: "sad from 12.30s to 17.56s (avg 0.82)".
+    Includes currently active span if present.
+    """
+    alerts: List[Dict[str, Any]] = session_state.get("alerts", [])
+    aggregates: Dict[str, Any] = session_state.get("aggregates", {})
+    lines: List[str] = []
+
+    # Include active span if exists
+    active = aggregates.get("active_span")
+    if active and isinstance(active, dict) and all(k in active for k in ("label", "t_start", "t_end")):
+        lbl = active.get("label")
+        t0 = _format_seconds(active.get("t_start"))
+        t1 = _format_seconds(active.get("t_end"))
+        lines.append(f"Currently {lbl} from {t0} to {t1} (ongoing)")
+
+    # Recent closed spans (reverse chronological)
+    closed_spans = [a for a in alerts if a.get("kind") == "emotion_span"]
+    closed_spans = sorted(closed_spans, key=lambda x: x.get("t_end", 0.0), reverse=True)
+    for a in closed_spans[:max_items]:
+        lbl = a.get("label", "unknown")
+        t0 = _format_seconds(a.get("t_start", 0.0))
+        t1 = _format_seconds(a.get("t_end", 0.0))
+        avg = a.get("avg_score")
+        if isinstance(avg, (int, float)):
+            lines.append(f"{lbl} from {t0} to {t1} (avg {avg:.2f})")
+        else:
+            lines.append(f"{lbl} from {t0} to {t1}")
+
+    if not lines:
+        return "No behavior spans detected yet."
+    return "\n".join(lines)
+
 def generate_summary_response(state_info):
-    """Generate a natural language summary of the current state"""
-    current_state = state_info["current_state"]
+    """Generate a natural language summary of the current state and behavior timeline."""
     last_update = state_info["last_update"]
+    last_ingest_at = state_info.get("last_ingest_at")
     
     if not state_info["has_data"]:
         return "Your state is currently empty. No data has been processed yet."
     
-    summary_parts = []
-    summary_parts.append(f"📋 **Current State Summary** (Last updated: {last_update})")
-    summary_parts.append("")
+    parts: List[str] = []
+    header = f"📋 **Current State Summary** (Last updated: {last_update})"
+    if last_ingest_at:
+        header += f" | Last ingest: {last_ingest_at}"
+    parts.append(header)
+    parts.append("")
     
-    for key, value in current_state.items():
-        if value:
-            summary_parts.append(f"✅ **{key}**: {value}")
-        else:
-            summary_parts.append(f"⏳ **{key}**: [Empty - waiting for data]")
+    # Behavior timeline summary
+    behavior = _generate_behavior_summary_from_state(state_info.get("session_state", {})) if "session_state" in state_info else ""
+    if not behavior:
+        # If not provided, pass the full session state to generator
+        behavior = _generate_behavior_summary_from_state(state_info.get("full_session_state", {})) if "full_session_state" in state_info else ""
+    # Fallback: try to use current global session_state structure passed to this function
+    if not behavior:
+        # We don't have the full session here; advise minimal line
+        behavior = "Behavior spans are tracked; ask for 'summarize recent behavior' to view."
+    parts.append("**Recent Behavior**:")
+    parts.append(behavior)
     
-    return "\n".join(summary_parts)
+    return "\n".join(parts)
 
 def generate_state_access_response(state_info):
     """Generate a detailed state access response"""
@@ -186,7 +245,10 @@ def conversational_response(user_input, session_state):
     if any(keyword in user_input_lower for keyword in summary_keywords):
         if not has_data:
             return "📋 **Current State Summary**: Your state is currently empty. No data has been processed yet."
-        return generate_summary_response(state_info)
+        # Attach session_state for deeper behavior summary usage
+        enriched_info = dict(state_info)
+        enriched_info["session_state"] = session_state
+        return generate_summary_response(enriched_info)
     
     # 3. State Access Intent (context-aware)
     access_keywords = [
@@ -275,12 +337,17 @@ def conversational_response(user_input, session_state):
         else:
             return "👋 Hello! I'm here to help you manage your state. Your state is currently empty - would you like to process some JSON data to get started?"
     
-    # 8. Context-aware default response
+    # 8. Behavior summary request
+    behavior_keywords = ["recent behavior", "behavior", "behaviour", "emotion spans", "timeline summary"]
+    if any(keyword in user_input_lower for keyword in behavior_keywords):
+        return _generate_behavior_summary_from_state(session_state)
+
+    # 9. Context-aware default response
     if not has_data:
-        return "💡 **Getting Started**: Your state is currently empty. Here are some things you can do:\n\n• **Process JSON**: 'Add this JSON: [your JSON data]' or 'Process this data: [your JSON data]'\n• **Learn More**: 'What can you do?' or 'Help me'\n• **See Structure**: 'Show me the template'"
+        return "💡 **Getting Started**: Your state is currently empty. Here are some things you can do:\n\n• **Process JSON**: feed model outputs directly; ingestion is automatic.\n• **Learn More**: 'What can you do?' or 'Help me'\n• **See Structure**: 'Show me the template'"
     
-    # 9. Intelligent fallback with context
-    return f"🤔 **I understand you're asking about your state**, but I'm not sure exactly what you need. Based on your current state ({json_inputs_count} JSON inputs), here are some helpful options:\n\n• **📋 Summaries**: 'Give me a summary' or 'Summarize my state'\n• **📊 Details**: 'Show me my state' or 'Access state'\n• **🔄 Updates**: 'Update user_id to new_value' or 'Change _id to abc123'\n• **❓ Help**: 'What can you do?' or 'Help me'\n\n💡 **Try rephrasing** or ask for help to see all available options!"
+    # 10. Intelligent fallback with context
+    return f"🤔 **I understand you're asking about your state**, but I'm not sure exactly what you need. Based on your current state ({json_inputs_count} JSON inputs), here are some helpful options:\n\n• **📋 Summaries**: 'Give me a summary' or 'Summarize recent behavior'\n• **📊 Details**: 'Show me my state' or 'Access state'\n• **❓ Help**: 'What can you do?' or 'Help me'\n\n💡 **You can also ask for 'emotion spans' or 'timeline summary'."
 
 # Create the conversational agent
 conversational_agent = Agent(
@@ -344,3 +411,22 @@ def extract_action_from_response(response):
         if match:
             return f"Update state: {match.group(1)}"
     return None
+
+# Deterministic handler so the agent summarizes from state without relying on LLM behavior
+async def handle_message(context):
+    try:
+        query = None
+        if hasattr(context, "user_content") and context.user_content and getattr(context.user_content, "parts", None):
+            first = context.user_content.parts[0]
+            if hasattr(first, "text"):
+                query = first.text
+        if query is None and hasattr(context, "message"):
+            query = context.message
+        if query is None:
+            query = ""
+
+        session_state = context.state if hasattr(context, "state") else {}
+        # Use our deterministic conversational response (includes behavior summary from alerts/timeline)
+        return handle_conversational_query(query, session_state)
+    except Exception as e:
+        return f"Error handling message: {e}"
