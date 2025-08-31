@@ -1,5 +1,4 @@
 from google.adk.agents import Agent
-from google.adk.tools.agent_tool import AgentTool
 import json
 import re
 from datetime import datetime
@@ -8,7 +7,7 @@ import litellm
 
 # Enhanced RAG function for behavioral analysis
 def rag_retrieve(query, session_state):
-    # Extract behavioral data from session state
+    """Retrieve behavioral context for analysis."""
     current_behavior = session_state.get("current_behavior", {})
     behavioral_data = session_state.get("behavioral_data", [])
     behavioral_insights = session_state.get("behavioral_insights", {})
@@ -42,8 +41,10 @@ def conversational_response(user_input, session_state):
     state_info = extract_state_info(session_state)
     
     # Check if we have behavioral data and user is asking for analysis
-    if state_info["has_data"] and any(keyword in user_input_lower for keyword in ["analyze", "behavior", "insights", "summary", "patterns"]):
-        return generate_summary_response(state_info)
+    keywords_to_check = ["analyze", "behavior", "insights", "summary", "patterns"]
+    
+    if state_info["has_data"] and any(keyword in user_input_lower for keyword in keywords_to_check):
+        return generate_enhanced_behavioral_analysis(state_info)
     
     # Handle specific behavioral analysis requests
     if "confidence" in user_input_lower and state_info["has_data"]:
@@ -90,8 +91,6 @@ def conversational_response(user_input, session_state):
     retrieved_context = rag_retrieve(user_input, session_state)
     return f"🤖 **Behavioral Analysis**: {retrieved_context}"
 
-# ... (rest unchanged)
-
 def extract_state_info(session_state):
     """Extract behavioral state information from session for analysis."""
     current_behavior = session_state.get("current_behavior", {})
@@ -111,7 +110,7 @@ def extract_state_info(session_state):
         bool(current_behavior.get("video_features")) or
         bool(current_behavior.get("audio_features"))
     )
-
+    
     return {
         "current_behavior": current_behavior,
         "behavioral_data_count": len(behavioral_data),
@@ -131,43 +130,57 @@ def _format_seconds(sec: float) -> str:
     except Exception:
         return str(sec)
 
-def _generate_behavior_summary_from_state(session_state: Dict[str, Any], max_items: int = 5) -> str:
-    """Generate concise behavior summary from alerts and active span.
-
-    Produces lines like: "sad from 12.30s to 17.56s (avg 0.82)".
-    Includes currently active span if present.
-    """
-    alerts: List[Dict[str, Any]] = session_state.get("alerts", [])
-    aggregates: Dict[str, Any] = session_state.get("aggregates", {})
+def _generate_behavior_summary_from_state(session_state: Dict[str, Any], max_items: int = 6) -> List[str]:
+    """Create concise behavior lines from behavioral data and insights."""
+    behavioral_data: List[Dict[str, Any]] = session_state.get("behavioral_data", [])
+    behavioral_insights: Dict[str, Any] = session_state.get("behavioral_insights", {})
+    current_behavior: Dict[str, Any] = session_state.get("current_behavior", {})
     lines: List[str] = []
 
-    # Include active span if exists
-    active = aggregates.get("active_span")
-    if active and isinstance(active, dict) and all(k in active for k in ("label", "t_start", "t_end")):
-        lbl = active.get("label")
-        t0 = _format_seconds(active.get("t_start"))
-        t1 = _format_seconds(active.get("t_end"))
-        lines.append(f"Currently {lbl} from {t0} to {t1} (ongoing)")
+    # Show current behavioral state
+    if current_behavior.get("behavior_profile"):
+        behavior_profile = current_behavior["behavior_profile"]
+        confidence = behavior_profile.get("confidence_level", 0)
+        engagement = behavior_profile.get("engagement_level", 0)
+        stress = behavior_profile.get("stress_level", 0)
+        valence = behavior_profile.get("emotional_valence", "unknown")
+        
+        lines.append(f"Current: {valence.title()} (Conf: {confidence:.2f}, Eng: {engagement:.2f}, Stress: {stress:.2f})")
 
-    # Recent closed spans (reverse chronological)
-    closed_spans = [a for a in alerts if a.get("kind") == "emotion_span"]
-    closed_spans = sorted(closed_spans, key=lambda x: x.get("t_end", 0.0), reverse=True)
-    for a in closed_spans[:max_items]:
-        lbl = a.get("label", "unknown")
-        t0 = _format_seconds(a.get("t_start", 0.0))
-        t1 = _format_seconds(a.get("t_end", 0.0))
-        avg = a.get("avg_score")
-        if isinstance(avg, (int, float)):
-            lines.append(f"{lbl} from {t0} to {t1} (avg {avg:.2f})")
-        else:
-            lines.append(f"{lbl} from {t0} to {t1}")
+    # Show behavioral insights
+    if behavioral_insights.get("emotional_pattern"):
+        lines.append(f"Pattern: {behavioral_insights['emotional_pattern']}")
+    
+    if behavioral_insights.get("confidence_pattern"):
+        lines.append(f"Confidence: {behavioral_insights['confidence_pattern']}")
+
+    # Show recent behavioral data points
+    if behavioral_data:
+        recent_data = behavioral_data[-max_items:]
+        for entry in recent_data:
+            timestamp = entry.get("timestamp", "Unknown")
+            behavior_data_entry = entry.get("behavior_data", {})
+            metadata = behavior_data_entry.get("metadata", {})
+            candidate_id = metadata.get("candidate_id", "Unknown")
+            behavior_profile = behavior_data_entry.get("behavior_profile", {})
+            valence = behavior_profile.get("emotional_valence", "unknown")
+            
+            # Format timestamp for display
+            try:
+                from datetime import datetime
+                dt = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
+                time_str = dt.strftime("%H:%M:%S")
+            except:
+                time_str = timestamp[:8] if len(timestamp) > 8 else timestamp
+            
+            lines.append(f"{time_str}: {valence.title()} ({candidate_id})")
 
     if not lines:
-        return "No behavior spans detected yet."
-    return "\n".join(lines)
+        return ["No behavioral data available yet."]
+    return lines
 
-def generate_summary_response(state_info):
-    """Generate a behavioral analysis summary of the candidate."""
+def generate_enhanced_behavioral_analysis(state_info):
+    """Generate enhanced behavioral analysis with pattern recognition."""
     last_update = state_info["last_update"]
     last_behavior_ingest = state_info.get("last_behavior_ingest")
     current_behavior = state_info["current_behavior"]
@@ -177,7 +190,7 @@ def generate_summary_response(state_info):
         return "🤖 No behavioral data available yet. Please ingest some behavioral data first using 'simulate json'."
 
     parts: List[str] = []
-    parts.append("🤖 **Behavioral Analysis Summary**")
+    parts.append("🤖 **Enhanced Behavioral Analysis with Pattern Recognition**")
     parts.append(f"🕒 Last updated: {last_update}")
     if last_behavior_ingest:
         parts.append(f"📊 Last behavioral data: {last_behavior_ingest}")
@@ -198,7 +211,6 @@ def generate_summary_response(state_info):
         parts.append(f"⏱️ **Current Analysis Period**: {duration} seconds")
         parts.append("")
 
-    # Behavioral profile analysis
     behavior_profile = current_behavior.get("behavior_profile", {})
     if behavior_profile:
         confidence = behavior_profile.get("confidence_level", 0)
@@ -206,336 +218,152 @@ def generate_summary_response(state_info):
         stress = behavior_profile.get("stress_level", 0)
         valence = behavior_profile.get("emotional_valence", "unknown")
 
-        parts.append("📈 **Behavioral Metrics**:")
-        parts.append(f"   🎯 **Confidence Level**: {confidence:.2f}")
-        parts.append(f"   🔥 **Engagement Level**: {engagement:.2f}")
-        parts.append(f"   😰 **Stress Level**: {stress:.2f}")
+        parts.append("📈 **Current Behavioral Metrics**:")
+        parts.append(f"   🎯 **Confidence**: {confidence:.2f}")
+        parts.append(f"   🔥 **Engagement**: {engagement:.2f}")
+        parts.append(f"   😰 **Stress**: {stress:.2f}")
         parts.append(f"   💭 **Emotional State**: {valence.title()}")
         parts.append("")
 
-        # Add behavioral insights
-        if confidence > 0.7:
-            parts.append("💡 **Insight**: High confidence indicates strong self-assurance")
-        elif confidence < 0.4:
-            parts.append("💡 **Insight**: Low confidence suggests nervousness or uncertainty")
+    # Enhanced Behavioral Insights with Pattern Recognition
+    behavioral_insights = state_info["behavioral_insights"]
+    if behavioral_insights:
+        parts.append("💡 **Pattern Recognition Insights**:")
         
-        if stress > 0.6:
-            parts.append("⚠️ **Alert**: Elevated stress levels detected")
+        # Pattern Summary
+        if "pattern_summary" in behavioral_insights:
+            parts.append(f"   📊 **Pattern Summary**: {behavioral_insights['pattern_summary']}")
+            parts.append("")
         
-        if engagement < 0.5:
-            parts.append("📉 **Note**: Engagement could be improved")
-
-    # Notable observations
-    observations = behavior_profile.get("notable_observations", [])
-    if observations:
-        parts.append("🔍 **Key Observations**:")
-        for obs in observations[:3]:  # Show top 3 observations
-            parts.append(f"   • {obs}")
+        # Confidence Analysis
+        if "confidence_pattern" in behavioral_insights:
+            pattern = behavioral_insights["confidence_pattern"]
+            avg_confidence = behavioral_insights.get("avg_confidence", 0)
+            parts.append(f"   🎯 **Confidence Analysis**:")
+            parts.append(f"      • Trend: {pattern.title()}")
+            parts.append(f"      • Average: {avg_confidence:.2f}")
+            
+            if "confidence_spikes" in behavioral_insights and behavioral_insights["confidence_spikes"]:
+                spikes = behavioral_insights["confidence_spikes"]
+                parts.append(f"      • Notable fluctuations: {len(spikes)} detected")
+            parts.append("")
+        
+        # Stress Analysis
+        if "stress_pattern" in behavioral_insights:
+            pattern = behavioral_insights["stress_pattern"]
+            avg_stress = behavioral_insights.get("avg_stress", 0)
+            parts.append(f"   😰 **Stress Analysis**:")
+            parts.append(f"      • Trend: {pattern.title()}")
+            parts.append(f"      • Average: {avg_stress:.2f}")
+            
+            if "stress_spikes" in behavioral_insights and behavioral_insights["stress_spikes"]:
+                spikes = behavioral_insights["stress_spikes"]
+                parts.append(f"      • Stress spikes: {len(spikes)} detected")
+            parts.append("")
+        
+        # Engagement Analysis
+        if "engagement_pattern" in behavioral_insights:
+            pattern = behavioral_insights["engagement_pattern"]
+            avg_engagement = behavioral_insights.get("avg_engagement", 0)
+            parts.append(f"   🔥 **Engagement Analysis**:")
+            parts.append(f"      • Trend: {pattern.title()}")
+            parts.append(f"      • Average: {avg_engagement:.2f}")
+            parts.append("")
+        
+        # Emotional Transitions
+        if "emotional_transitions" in behavioral_insights and behavioral_insights["emotional_transitions"]:
+            transitions = behavioral_insights["emotional_transitions"]
+            parts.append(f"   💭 **Emotional Transitions**:")
+            for transition in transitions[-2:]:  # Show last 2 transitions
+                parts.append(f"      • {transition['from']} → {transition['to']}")
+            parts.append("")
+        
+        # Behavioral Timeline
+        if "behavioral_timeline" in behavioral_insights:
+            timeline = behavioral_insights["behavioral_timeline"]
+            if timeline:
+                parts.append(f"   📅 **Recent Behavioral Timeline**:")
+                for entry in timeline[-3:]:  # Show last 3 entries
+                    timestamp = entry.get("timestamp", "")[:19]  # Truncate timestamp
+                    confidence = entry.get("confidence", 0)
+                    engagement = entry.get("engagement", 0)
+                    stress = entry.get("stress", 0)
+                    valence = entry.get("emotional_valence", "neutral")
+                    parts.append(f"      • {timestamp}: Conf({confidence:.2f}) Eng({engagement:.2f}) Stress({stress:.2f}) {valence.title()}")
+    else:
+        # If no behavioral insights, generate them on-the-fly
+        parts.append("💡 **Pattern Recognition Insights**:")
+        parts.append("   🔄 **Generating real-time pattern analysis...**")
         parts.append("")
-
-    # Facial expressions analysis
-    video_features = current_behavior.get("video_features", {})
-    facial_expressions = video_features.get("facial_expressions", [])
-    if facial_expressions:
-        parts.append("😊 **Recent Facial Expressions**:")
-        for expr in facial_expressions[-3:]:
-            time_sec = expr.get("time_sec", 0)
-            expression = expr.get("expression", "unknown")
-            confidence = expr.get("confidence", 0)
-            parts.append(f"   {time_sec:.1f}s: {expression} ({confidence:.2f})")
-        parts.append("")
-
-    # Speech analysis
-    audio_features = current_behavior.get("audio_features", {})
-    speech_segments = audio_features.get("speech_segments", [])
-    if speech_segments:
-        parts.append("🎤 **Recent Speech**:")
-        for segment in speech_segments[-2:]:
-            start = segment.get("start_sec", 0)
-            text = segment.get("text", "")[:60]
-            parts.append(f"   {start:.1f}s: \"{text}...\"")
-        parts.append("")
-
-    # Data statistics
-    parts.append("📊 **Analysis Statistics**:")
-    parts.append(f"   📝 Behavioral data points: {behavioral_data_count}")
-    if state_info["alerts_count"] > 0:
-        parts.append(f"   🚨 Behavioral alerts: {state_info['alerts_count']}")
+        
+        # Generate basic pattern analysis from available data
+        behavioral_data = state_info["full_session_state"].get("behavioral_data", [])
+        if behavioral_data:
+            # Extract confidence values
+            confidence_values = []
+            for entry in behavioral_data:
+                behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
+                conf = behavior_profile.get("confidence_level", 0)
+                if conf > 0:
+                    confidence_values.append(conf)
+            
+            if confidence_values:
+                avg_confidence = sum(confidence_values) / len(confidence_values)
+                parts.append(f"   🎯 **Confidence Analysis**:")
+                parts.append(f"      • Average: {avg_confidence:.2f}")
+                parts.append(f"      • Data points: {len(confidence_values)}")
+                
+                if len(confidence_values) >= 2:
+                    if confidence_values[-1] > confidence_values[0] + 0.1:
+                        parts.append(f"      • Trend: Increasing")
+                    elif confidence_values[-1] < confidence_values[0] - 0.1:
+                        parts.append(f"      • Trend: Decreasing")
+                    else:
+                        parts.append(f"      • Trend: Stable")
+                parts.append("")
 
     return "\n".join(parts)
-
-def generate_behavioral_state_response(state_info):
-    """Generate a detailed behavioral state response"""
-    current_behavior = state_info["current_behavior"]
-    last_update = state_info["last_update"]
-    behavioral_data_count = state_info["behavioral_data_count"]
-    
-    response_parts = []
-    response_parts.append(f"📊 **Current Behavioral State**")
-    response_parts.append(f"🕒 **Last Updated**: {last_update}")
-    response_parts.append(f"📥 **Total Behavioral Data Points**: {behavioral_data_count}")
-    response_parts.append("")
-    response_parts.append("**Current Behavioral Profile**:")
-    response_parts.append("```json")
-    response_parts.append(json.dumps(current_behavior, indent=2))
-    response_parts.append("```")
-    
-    return "\n".join(response_parts)
-
-def extract_update_intent(user_input):
-    """Extract update intent from natural language"""
-    # Patterns for detecting update requests - more comprehensive
-    update_patterns = [
-        # "update my _id to test456"
-        r"(?:update|change|modify|set)\s+(?:my\s+)?(?:the\s+)?(?:value\s+of\s+)?(\w+)\s+(?:to|as|=)\s+['\"]?([^'\"]+)['\"]?",
-        # "set _id to test456"
-        r"(?:set|change)\s+(?:my\s+)?(\w+)\s+(?:to|=)\s+['\"]?([^'\"]+)['\"]?",
-        # "_id should be test456"
-        r"(?:my\s+)?(\w+)\s+(?:should\s+be|is\s+now|equals|=)\s+['\"]?([^'\"]+)['\"]?",
-        # "update _id with test456"
-        r"update\s+(?:my\s+)?(\w+)\s+with\s+['\"]?([^'\"]+)['\"]?",
-        # "change _id to test456"
-        r"change\s+(?:my\s+)?(\w+)\s+to\s+['\"]?([^'\"]+)['\"]?",
-        # "modify _id to test456"
-        r"modify\s+(?:my\s+)?(\w+)\s+to\s+['\"]?([^'\"]+)['\"]?"
-    ]
-    
-    for pattern in update_patterns:
-        match = re.search(pattern, user_input.lower())
-        if match:
-            return {
-                "key": match.group(1),
-                "value": match.group(2).strip(),
-                "intent": "update"
-            }
-    
-    return None
-
-def conversational_response(user_input, session_state):
-    """RAG Agentic System - Analyzes context and current state to provide intelligent responses"""
-    user_input_lower = user_input.lower().strip()
-    state_info = extract_state_info(session_state)
-    
-    # ===== CONTEXT ANALYSIS =====
-    # Analyze current behavioral context for better responses
-    has_data = state_info["has_data"]
-    behavioral_data_count = state_info["behavioral_data_count"]
-    last_update = state_info["last_update"]
-    
-    # ===== INTENT CLASSIFICATION WITH CONTEXT =====
-
-    # 1. Behavioral Analysis Intents
-    behavioral_keywords = [
-        "analyze", "behavior", "behavioral", "confidence", "engagement", "stress",
-        "emotional", "facial", "expression", "gaze", "posture", "body language",
-        "prosody", "voice", "tone", "sentiment", "valence", "mood", "emotion"
-    ]
-
-    if any(keyword in user_input_lower for keyword in behavioral_keywords):
-        if "confidence" in user_input_lower:
-            return "🎯 **Confidence Analysis**: Let me analyze the candidate's confidence patterns from the behavioral data."
-        elif "stress" in user_input_lower or "anxiety" in user_input_lower:
-            return "😰 **Stress Analysis**: Analyzing stress indicators from facial expressions, voice patterns, and body language."
-        elif "engagement" in user_input_lower:
-            return "🔥 **Engagement Analysis**: Evaluating candidate engagement through gaze tracking and interaction patterns."
-        elif "emotional" in user_input_lower or "emotion" in user_input_lower:
-            return "💭 **Emotional Analysis**: Examining emotional valence and mood patterns throughout the interview."
-        else:
-            return "🤖 **Behavioral Analysis**: I'll provide a comprehensive analysis of the candidate's behavioral patterns."
-
-    # 2. JSON Processing Intent (with context awareness)
-    json_keywords = [
-        "process", "save", "add", "store", "input", "json", "data", "update with",
-        "process this", "save this", "add this", "store this", "input this"
-    ]
-    
-    json_patterns = [
-        r'\{.*\}',  # Contains curly braces
-        r'\[.*\]',  # Contains square brackets
-        r'"[^"]*"\s*:',  # Contains key-value pairs
-        r'process.*json',  # Contains "process" and "json"
-        r'save.*json',     # Contains "save" and "json"
-    ]
-    
-    has_json_content = any(re.search(pattern, user_input, re.IGNORECASE) for pattern in json_patterns)
-    has_json_keywords = any(keyword in user_input_lower for keyword in json_keywords)
-    
-    if has_json_content or has_json_keywords:
-        json_match = re.search(r'(\{.*\})', user_input, re.DOTALL)
-        if json_match:
-            json_str = json_match.group(1)
-            try:
-                json.loads(json_str)
-                # Context-aware response before execution
-                if has_data:
-                    return f"EXECUTE_JSON_PROCESSING:{json_str}"
-                else:
-                    return f"EXECUTE_JSON_PROCESSING:{json_str}"
-            except json.JSONDecodeError:
-                return "❌ I found what looks like JSON data, but it's not in valid JSON format. Please check the syntax and try again."
-        else:
-            return "🔄 I understand you want to process JSON data. Please provide the JSON data you'd like to process."
-    
-    # 2. Summary Intent (context-aware)
-    summary_keywords = [
-        "summary", "summarize", "summarise", "overview", "current state", 
-        "what's in", "what is in", "show me", "tell me about", "give me summary",
-        "summarize my", "summarise my", "current status", "state summary"
-    ]
-    
-    if any(keyword in user_input_lower for keyword in summary_keywords):
-        if not has_data:
-            return "📋 **Current State Summary**: Your state is currently empty. No data has been processed yet."
-        # Attach session_state for deeper behavior summary usage
-        enriched_info = dict(state_info)
-        enriched_info["session_state"] = session_state
-        return generate_summary_response(enriched_info)
-    
-    # 3. Behavioral Data Access Intent (context-aware)
-    access_keywords = [
-        "access data", "show data", "display data", "full data", 
-        "detailed data", "complete data", "all data", "show all",
-        "what data", "current data", "data details", "detailed view"
-    ]
-    
-    if any(keyword in user_input_lower for keyword in access_keywords):
-        if not has_data:
-            return "📊 **Current State Details**: Your state is currently empty. Process some JSON data to get started!"
-        return generate_state_access_response(state_info)
-    
-    # 4. Update Intent (enhanced with context)
-    update_intent = extract_update_intent(user_input)
-    if update_intent:
-        key = update_intent["key"]
-        value = update_intent["value"]
-        
-        # Behavioral analysis doesn't need template updates
-        return f"❌ Behavioral analysis system doesn't support manual state updates. Use 'simulate json' to ingest behavioral data."
-    
-    # 5. Behavioral Data Structure Intent
-    structure_keywords = [
-        "template", "schema", "structure", "format", "what keys", 
-        "available keys", "supported keys", "what fields", "data structure"
-    ]
-    
-    if any(keyword in user_input_lower for keyword in structure_keywords):
-        return f"📋 **Behavioral Data Structure**:\nThis system processes behavioral analysis JSON with:\n• **metadata**: candidate info, timestamps\n• **video_features**: facial expressions, gaze tracking\n• **audio_features**: speech segments, voice tone\n• **behavior_profile**: confidence, engagement, stress levels\n\nUse 'simulate json' to see the complete structure."
-    
-    # 6. Help Intent (context-aware)
-    help_keywords = [
-        "help", "what can you do", "how to", "commands", "available", 
-        "capabilities", "features", "what do you do", "assist me"
-    ]
-    
-    if any(keyword in user_input_lower for keyword in help_keywords):
-        help_response = """🤖 **I can help you with behavioral analysis! Here's what I can do:**
-
-📊 **Behavioral Analysis**: Analyze candidate behavior and emotions
-   - "analyze behavior"
-   - "show insights"
-   - "confidence level"
-   - "stress analysis"
-
-📈 **Dashboard & Visualization**: View behavioral data
-   - "show dashboard"
-   - "emotional timeline"
-   - "debug state"
-
-📋 **Data Ingestion**: Load behavioral data
-   - "simulate json"
-   - "simulate event"
-
-💡 **Natural Language**: I understand various ways to ask for behavioral analysis!"""
-        
-        if has_data:
-            help_response += f"\n\n📊 **Current Status**: You have {behavioral_data_count} behavioral data points in your session."
-        else:
-            help_response += "\n\n📊 **Current Status**: Your session is empty. Try 'simulate json' to load behavioral data!"
-            
-        return help_response
-    
-    # 7. Greeting Intent
-    greeting_keywords = ["hi", "hello", "hey", "good morning", "good afternoon", "good evening"]
-    if any(keyword in user_input_lower for keyword in greeting_keywords):
-        if has_data:
-            return f"👋 Hello! I see you have behavioral data in your session ({behavioral_data_count} data points processed). How can I help you analyze the candidate's behavior today?"
-        else:
-            return "👋 Hello! I'm here to help you analyze candidate behavior. Your session is currently empty - would you like to ingest some behavioral data to get started?"
-    
-    # 8. Behavior summary request
-    behavior_keywords = ["recent behavior", "behavior", "behaviour", "emotion spans", "timeline summary"]
-    if any(keyword in user_input_lower for keyword in behavior_keywords):
-        return _generate_behavior_summary_from_state(session_state)
-
-    # 9. Context-aware default response
-    if not has_data:
-        return "💡 **Getting Started**: Your session is currently empty. Here are some things you can do:\n\n• **Ingest Behavioral Data**: Use 'simulate json' to load behavioral data\n• **Learn More**: 'What can you do?' or 'Help me'\n• **Analyze Behavior**: 'analyze behavior' or 'show insights'"
-    
-    # 10. Intelligent fallback with context
-    return f"🤔 **I understand you're asking about behavioral analysis**, but I'm not sure exactly what you need. Based on your current session ({behavioral_data_count} behavioral data points), here are some helpful options:\n\n• **📋 Behavioral Analysis**: 'analyze behavior' or 'show insights'\n• **📊 Dashboard**: 'show dashboard' or 'emotional timeline'\n• **❓ Help**: 'What can you do?' or 'Help me'\n\n💡 **You can also ask for specific metrics like 'confidence level' or 'stress analysis'."
 
 # Create the conversational agent
 conversational_agent = Agent(
     name="conversational_agent",
     model="gemini-2.0-flash",  # Use API for enhanced responses
-    instruction="""You are an advanced conversational AI assistant for a state management system. Your role is to:
+    instruction="""You are an advanced conversational AI assistant for behavioral analysis. Your role is to:
 
-1. **Understand Natural Language**: Interpret user queries in natural language, including variations, spelling mistakes, and different phrasings.
+1. **Understand Natural Language**: Interpret user queries about behavioral analysis, including variations and different phrasings.
 
-2. **Provide Direct Answers**: Instead of telling users what commands to use, directly provide the information they're asking for.
+2. **Provide Behavioral Insights**: Analyze candidate behavior, emotions, and patterns from multimodal data.
 
-3. **Handle State Operations**: 
-   - Generate summaries of current state
-   - Provide detailed state information
-   - Execute state updates directly
-   - Explain the system template
+3. **Handle Behavioral Analysis**: 
+   - Generate behavioral summaries
+   - Provide pattern recognition insights
+   - Analyze confidence, stress, and engagement levels
+   - Track emotional transitions
 
 4. **Be Conversational**: Use natural, helpful language and provide context-aware responses.
 
 5. **Error Handling**: Gracefully handle unclear requests and provide helpful suggestions.
 
 **Key Capabilities:**
-- State summaries and detailed views
-- Natural language state updates with direct execution
-- Template explanations
-- Help and guidance
-- Context-aware responses
-- JSON processing with natural language
+- Behavioral pattern recognition
+- Real-time behavioral analysis
+- Confidence, stress, and engagement tracking
+- Emotional transition analysis
+- Behavioral timeline visualization
 
 **Response Style:**
 - Use markdown formatting for better readability
 - Include emojis for visual appeal
-- Provide clear, actionable information
+- Provide clear, actionable behavioral insights
 - Be conversational and helpful
-- Use the EXECUTE_JSON_PROCESSING: and EXECUTE_STATE_UPDATE: markers for direct actions
 
-**Direct Action Markers:**
-- For JSON processing: Return "EXECUTE_JSON_PROCESSING: followed by the JSON string"
-- For state updates: Return "EXECUTE_STATE_UPDATE:key=value"
-
-Remember: You have access to the current session state and should provide direct, useful responses rather than just explaining what commands exist.""",
+Remember: You have access to the current session state and should provide direct, useful behavioral analysis responses.""",
     tools=[]  # No tools needed as we handle everything in the response function
 )
 
 def handle_conversational_query(user_input, session_state):
     """Handle conversational queries and return appropriate responses"""
     return conversational_response(user_input, session_state)
-
-def extract_action_from_response(response):
-    """Extract action command from conversational response"""
-    if "Process this JSON:" in response:
-        # Extract the command from the response
-        import re
-        match = re.search(r'`Process this JSON: (.*?)`', response)
-        if match:
-            return f"Process this JSON: {match.group(1)}"
-    elif "Update state:" in response:
-        # Extract the command from the response
-        import re
-        match = re.search(r'`Update state: (.*?)`', response)
-        if match:
-            return f"Update state: {match.group(1)}"
-    return None
 
 # Deterministic handler so the agent summarizes from state without relying on LLM behavior
 async def handle_message(context):

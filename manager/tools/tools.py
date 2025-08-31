@@ -1,9 +1,8 @@
 import json
 import datetime
 from typing import Dict, Any, Optional, List
-from google.adk.tools.tool_context import ToolContext
 
-# ===== Deterministic real-time ingestion tools =====
+# ===== Enhanced Behavioral Analysis Tools =====
 
 def _now_iso() -> str:
     """UTC ISO timestamp."""
@@ -12,103 +11,32 @@ def _now_iso() -> str:
     except Exception:
         return datetime.datetime.utcnow().isoformat()
 
-def _ensure_realtime_state_structures(state: Dict[str, Any]) -> None:
-    """Ensure keys required for real-time ingestion exist."""
-    if "timeline" not in state:
-        state["timeline"] = []
-    if "aggregates" not in state:
-        state["aggregates"] = {"last_processed_timeline_index": -1}
+def _ensure_behavioral_state_structures(state: Dict[str, Any]) -> None:
+    """Ensure behavioral analysis state structures exist."""
+    if "candidate_info" not in state:
+        state["candidate_info"] = {}
+    if "behavioral_data" not in state:
+        state["behavioral_data"] = []
+    if "current_behavior" not in state:
+        state["current_behavior"] = {}
+    if "behavioral_insights" not in state:
+        state["behavioral_insights"] = {}
+    if "behavior_timeline" not in state:
+        state["behavior_timeline"] = []
     if "alerts" not in state:
         state["alerts"] = []
-    if "question_windows" not in state:
-        state["question_windows"] = {}
+    if "last_update" not in state:
+        state["last_update"] = _now_iso()
+    if "last_behavior_ingest" not in state:
+        state["last_behavior_ingest"] = None
 
 def ensure_session_structures(session_service, app_name: str, user_id: str, session_id: str) -> None:
-    """Ensure the session has required structures for real-time processing."""
+    """Ensure the session has required structures for behavioral analysis."""
     session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
     if not session:
         return
-    _ensure_realtime_state_structures(session.state)
-    if "last_update" not in session.state:
-        session.state["last_update"] = _now_iso()
+    _ensure_behavioral_state_structures(session.state)
     session_service.update_session(app_name, user_id, session_id, session.state)
-
-def _get_event_label(event: Dict[str, Any]) -> Optional[str]:
-    """Derive a canonical label from features (sentiment first, then face emotion)."""
-    try:
-        sentiment = (((event.get("features") or {}).get("sentiment") or {}).get("label"))
-        if sentiment:
-            return str(sentiment).lower()
-        face = (((event.get("features") or {}).get("face") or {}).get("emotion"))
-        if face:
-            return str(face).lower()
-    except Exception:
-        pass
-    return None
-
-def _get_event_score(event: Dict[str, Any]) -> Optional[float]:
-    """Get a confidence/score if available."""
-    try:
-        s_score = (((event.get("features") or {}).get("sentiment") or {}).get("score"))
-        if isinstance(s_score, (int, float)):
-            return float(s_score)
-        f_conf = (((event.get("features") or {}).get("face") or {}).get("confidence"))
-        if isinstance(f_conf, (int, float)):
-            return float(f_conf)
-    except Exception:
-        pass
-    return None
-
-def ingest_event(session_service, app_name: str, user_id: str, session_id: str, event: Dict[str, Any]) -> bool:
-    """
-    Ingest a fused multimodal event deterministically.
-
-    - Adds arrival timestamp when JSON reached ADK
-    - Ensures idempotency via segment_id (if provided)
-    - Updates timeline and last_update
-    - Triggers aggregate/alert updates (no textual summaries here)
-
-    Returns True if ingested, False if deduplicated/ignored.
-    """
-    session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
-    if not session:
-        return False
-
-    _ensure_realtime_state_structures(session.state)
-
-    # Normalize event and set arrival timestamp
-    ev: Dict[str, Any] = dict(event) if isinstance(event, dict) else {}
-    ev.setdefault("arrival_ts", _now_iso())
-
-    # Require basic timing fields
-    t_start = ev.get("t_start")
-    t_end = ev.get("t_end")
-    if not isinstance(t_start, (int, float)) or not isinstance(t_end, (int, float)):
-        # Invalid event, ignore
-        return False
-
-    # Idempotency: if segment_id present and already seen, skip
-    segment_id = ev.get("segment_id")
-    if segment_id:
-        if any((e.get("segment_id") == segment_id) for e in session.state["timeline"]):
-            return False
-
-    # Append and keep timeline ordered by t_start
-    session.state["timeline"].append(ev)
-    session.state["timeline"].sort(key=lambda x: (x.get("t_start", 0), x.get("t_end", 0)))
-
-    # Behavioral analysis system - no need for old state structure
-    pass
-
-    now = _now_iso()
-    session.state["last_update"] = now
-    session.state["last_ingest_at"] = now  # explicit timestamp when JSON reached ADK
-
-    # Update aggregates and alerts
-    _update_aggregates_and_alerts(session.state)
-
-    session_service.update_session(app_name, user_id, session_id, session.state)
-    return True
 
 def ingest_from_model_output(session_service, app_name: str, user_id: str, session_id: str, payload: Dict[str, Any]) -> bool:
     """
@@ -153,7 +81,7 @@ def ingest_from_model_output(session_service, app_name: str, user_id: str, sessi
     if len(session.state["behavioral_data"]) > 50:
         session.state["behavioral_data"] = session.state["behavioral_data"][-50:]
 
-    # Update behavioral insights
+    # Update behavioral insights with pattern recognition
     _update_behavioral_insights(session.state)
 
     # Update timestamps
@@ -161,67 +89,257 @@ def ingest_from_model_output(session_service, app_name: str, user_id: str, sessi
     session.state["last_update"] = now
     session.state["last_behavior_ingest"] = now
 
+    # Force pattern recognition update
+    print(f"🔄 **Pattern Recognition**: Analyzing {len(session.state['behavioral_data'])} behavioral data points...")
+    
     session_service.update_session(app_name, user_id, session_id, session.state)
     return True
 
-def _ensure_behavioral_state_structures(state: Dict[str, Any]) -> None:
-    """Ensure behavioral analysis state structures exist."""
-    if "candidate_info" not in state:
-        state["candidate_info"] = {}
-    if "behavioral_data" not in state:
-        state["behavioral_data"] = []
-    if "current_behavior" not in state:
-        state["current_behavior"] = {}
-    if "behavioral_insights" not in state:
-        state["behavioral_insights"] = {}
-    if "behavior_timeline" not in state:
-        state["behavior_timeline"] = []
-    if "alerts" not in state:
-        state["alerts"] = []
+def _analyze_trend(values: List[float]) -> str:
+    """Analyze trend in a list of values."""
+    if len(values) < 2:
+        return "insufficient_data"
+    
+    # Calculate trend using simple linear regression
+    n = len(values)
+    x_sum = sum(range(n))
+    y_sum = sum(values)
+    xy_sum = sum(i * val for i, val in enumerate(values))
+    x_sq_sum = sum(i * i for i in range(n))
+    
+    # Calculate slope
+    slope = (n * xy_sum - x_sum * y_sum) / (n * x_sq_sum - x_sum * x_sum)
+    
+    # Determine trend based on slope
+    if slope > 0.05:
+        return "increasing"
+    elif slope < -0.05:
+        return "decreasing"
+    else:
+        return "stable"
+
+def _detect_spikes(values: List[float], threshold: float = 0.15) -> List[Dict[str, Any]]:
+    """Detect spikes in a list of values."""
+    spikes = []
+    if len(values) < 3:
+        return spikes
+    
+    for i in range(1, len(values) - 1):
+        current = values[i]
+        prev = values[i - 1]
+        next_val = values[i + 1]
+        
+        # Check for spike (current value is significantly higher than neighbors)
+        if current > prev + threshold and current > next_val + threshold:
+            spikes.append({
+                "index": i,
+                "value": current,
+                "magnitude": current - max(prev, next_val)
+            })
+        
+        # Check for drop (current value is significantly lower than neighbors)
+        elif current < prev - threshold and current < next_val - threshold:
+            spikes.append({
+                "index": i,
+                "value": current,
+                "magnitude": min(prev, next_val) - current
+            })
+    
+    return spikes
+
+def _generate_behavioral_timeline(behavioral_data: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Generate behavioral timeline with pattern annotations."""
+    timeline = []
+    
+    for i, entry in enumerate(behavioral_data[-10:]):  # Last 10 entries
+        behavior_data = entry.get("behavior_data", {})
+        behavior_profile = behavior_data.get("behavior_profile", {})
+        metadata = behavior_data.get("metadata", {})
+        
+        timeline_entry = {
+            "timestamp": entry.get("timestamp", ""),
+            "candidate_id": metadata.get("candidate_id", ""),
+            "confidence": behavior_profile.get("confidence_level", 0),
+            "engagement": behavior_profile.get("engagement_level", 0),
+            "stress": behavior_profile.get("stress_level", 0),
+            "emotional_valence": behavior_profile.get("emotional_valence", "neutral"),
+            "index": i
+        }
+        
+        # Add pattern annotations
+        if i > 0:
+            prev_entry = timeline[i - 1]
+            timeline_entry["confidence_change"] = timeline_entry["confidence"] - prev_entry["confidence"]
+            timeline_entry["engagement_change"] = timeline_entry["engagement"] - prev_entry["engagement"]
+            timeline_entry["stress_change"] = timeline_entry["stress"] - prev_entry["stress"]
+        
+        timeline.append(timeline_entry)
+    
+    return timeline
+
+def _generate_pattern_summary(insights: Dict[str, Any]) -> str:
+    """Generate a human-readable pattern summary."""
+    summary_parts = []
+    
+    # Confidence pattern
+    if "confidence_pattern" in insights:
+        pattern = insights["confidence_pattern"]
+        if pattern == "increasing":
+            summary_parts.append("Confidence is trending upward")
+        elif pattern == "decreasing":
+            summary_parts.append("Confidence is declining")
+        else:
+            summary_parts.append("Confidence remains stable")
+    
+    # Stress pattern
+    if "stress_pattern" in insights:
+        pattern = insights["stress_pattern"]
+        if pattern == "increasing":
+            summary_parts.append("Stress levels are rising")
+        elif pattern == "decreasing":
+            summary_parts.append("Stress levels are decreasing")
+        else:
+            summary_parts.append("Stress levels are stable")
+    
+    # Engagement pattern
+    if "engagement_pattern" in insights:
+        pattern = insights["engagement_pattern"]
+        if pattern == "increasing":
+            summary_parts.append("Engagement is improving")
+        elif pattern == "decreasing":
+            summary_parts.append("Engagement is declining")
+        else:
+            summary_parts.append("Engagement remains consistent")
+    
+    # Emotional transitions
+    if "emotional_transitions" in insights and insights["emotional_transitions"]:
+        transitions = insights["emotional_transitions"]
+        if len(transitions) > 0:
+            latest = transitions[-1]
+            summary_parts.append(f"Recent emotional shift from {latest['from']} to {latest['to']}")
+    
+    # Spikes detection
+    if "confidence_spikes" in insights and insights["confidence_spikes"]:
+        summary_parts.append("Notable confidence fluctuations detected")
+    
+    if "stress_spikes" in insights and insights["stress_spikes"]:
+        summary_parts.append("Stress spikes observed")
+    
+    return "; ".join(summary_parts) if summary_parts else "No significant patterns detected"
 
 def _update_behavioral_insights(state: Dict[str, Any]) -> None:
-    """Update behavioral insights based on accumulated data."""
+    """Update behavioral insights with advanced pattern recognition."""
     behavioral_data = state.get("behavioral_data", [])
     if not behavioral_data:
         return
 
     insights = state.setdefault("behavioral_insights", {})
 
-    # Analyze confidence trends
+    # Enhanced Confidence Pattern Analysis
     confidence_values = []
-    for entry in behavioral_data[-10:]:  # Last 10 entries
+    confidence_timestamps = []
+    for entry in behavioral_data[-15:]:  # Last 15 entries for better pattern detection
         behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
         confidence = behavior_profile.get("confidence_level", 0)
+        timestamp = entry.get("timestamp", "")
         if confidence > 0:
             confidence_values.append(confidence)
+            confidence_timestamps.append(timestamp)
 
     if confidence_values:
         avg_confidence = sum(confidence_values) / len(confidence_values)
         insights["confidence_trend"] = confidence_values[-5:]  # Last 5 confidence values
         insights["avg_confidence"] = avg_confidence
+        insights["confidence_timestamps"] = confidence_timestamps[-5:]
 
-        # Determine confidence pattern
+        # Advanced confidence pattern detection
         if len(confidence_values) >= 3:
-            if confidence_values[-1] > confidence_values[0] + 0.1:
-                insights["confidence_pattern"] = "increasing"
-            elif confidence_values[-1] < confidence_values[0] - 0.1:
-                insights["confidence_pattern"] = "decreasing"
-            else:
-                insights["confidence_pattern"] = "stable"
+            recent_trend = _analyze_trend(confidence_values[-3:])
+            overall_trend = _analyze_trend(confidence_values)
+            
+            insights["confidence_pattern"] = recent_trend
+            insights["confidence_overall_trend"] = overall_trend
+            
+            # Detect confidence spikes and drops
+            confidence_spikes = _detect_spikes(confidence_values, threshold=0.15)
+            insights["confidence_spikes"] = confidence_spikes
 
-    # Analyze emotional patterns
+    # Enhanced Stress Pattern Analysis
+    stress_values = []
+    stress_timestamps = []
+    for entry in behavioral_data[-15:]:
+        behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
+        stress = behavior_profile.get("stress_level", 0)
+        timestamp = entry.get("timestamp", "")
+        if stress > 0:
+            stress_values.append(stress)
+            stress_timestamps.append(timestamp)
+
+    if stress_values:
+        avg_stress = sum(stress_values) / len(stress_values)
+        insights["stress_trend"] = stress_values[-5:]
+        insights["avg_stress"] = avg_stress
+        insights["stress_timestamps"] = stress_timestamps[-5:]
+
+        # Stress pattern detection
+        if len(stress_values) >= 3:
+            stress_trend = _analyze_trend(stress_values[-3:])
+            insights["stress_pattern"] = stress_trend
+            
+            # Detect stress spikes
+            stress_spikes = _detect_spikes(stress_values, threshold=0.2)
+            insights["stress_spikes"] = stress_spikes
+
+    # Enhanced Engagement Pattern Analysis
+    engagement_values = []
+    engagement_timestamps = []
+    for entry in behavioral_data[-15:]:
+        behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
+        engagement = behavior_profile.get("engagement_level", 0)
+        timestamp = entry.get("timestamp", "")
+        if engagement > 0:
+            engagement_values.append(engagement)
+            engagement_timestamps.append(timestamp)
+
+    if engagement_values:
+        avg_engagement = sum(engagement_values) / len(engagement_values)
+        insights["engagement_trend"] = engagement_values[-5:]
+        insights["avg_engagement"] = avg_engagement
+        insights["engagement_timestamps"] = engagement_timestamps[-5:]
+
+        # Engagement pattern detection
+        if len(engagement_values) >= 3:
+            engagement_trend = _analyze_trend(engagement_values[-3:])
+            insights["engagement_pattern"] = engagement_trend
+
+    # Enhanced Emotional Pattern Analysis
     valence_counts = {"positive": 0, "negative": 0, "neutral": 0}
+    emotional_transitions = []
+    previous_valence = None
+    
     for entry in behavioral_data[-10:]:
         behavior_profile = entry.get("behavior_data", {}).get("behavior_profile", {})
         valence = behavior_profile.get("emotional_valence", "neutral")
+        timestamp = entry.get("timestamp", "")
+        
         if valence in valence_counts:
             valence_counts[valence] += 1
+            
+        # Track emotional transitions
+        if previous_valence and previous_valence != valence:
+            emotional_transitions.append({
+                "from": previous_valence,
+                "to": valence,
+                "timestamp": timestamp
+            })
+        previous_valence = valence
 
     most_common_valence = max(valence_counts, key=valence_counts.get)
     insights["dominant_emotion"] = most_common_valence
     insights["emotional_distribution"] = valence_counts
+    insights["emotional_transitions"] = emotional_transitions[-3:]  # Last 3 transitions
 
-    # Generate simple emotional pattern description
+    # Enhanced emotional pattern description
     if valence_counts["positive"] > valence_counts["negative"] + 2:
         insights["emotional_pattern"] = "predominantly positive"
     elif valence_counts["negative"] > valence_counts["positive"] + 2:
@@ -229,133 +347,8 @@ def _update_behavioral_insights(state: Dict[str, Any]) -> None:
     else:
         insights["emotional_pattern"] = "mixed emotional state"
 
-def mark_question_window(session_service, app_name: str, user_id: str, session_id: str, question_id: str, t_start: Optional[float] = None, t_end: Optional[float] = None) -> None:
-    """Update question window timing in state."""
-    session = session_service.get_session(app_name=app_name, user_id=user_id, session_id=session_id)
-    if not session:
-        return
-    _ensure_realtime_state_structures(session.state)
-    qw = session.state["question_windows"].get(question_id, {})
-    if t_start is not None:
-        qw["t_start"] = t_start
-    if t_end is not None:
-        qw["t_end"] = t_end
-    session.state["question_windows"][question_id] = qw
-    session.state["last_update"] = _now_iso()
-    session_service.update_session(app_name, user_id, session_id, session.state)
-
-def _update_aggregates_and_alerts(state: Dict[str, Any]) -> None:
-    """
-    Compute lightweight aggregates and detect emotion spans for alerts.
-
-    We track contiguous spans by a canonical label (sentiment/face). When a span closes
-    and is at least min_span_seconds, append a structured alert for the conversational
-    agent to verbalize later. No text is generated here.
-    """
-    timeline: List[Dict[str, Any]] = state.get("timeline", [])
-    aggregates: Dict[str, Any] = state.get("aggregates", {})
-    alerts: List[Dict[str, Any]] = state.get("alerts", [])
-
-    state["aggregates"] = aggregates
-    state["alerts"] = alerts
-
-    if not timeline:
-        return
-
-    last_idx = aggregates.get("last_processed_timeline_index", -1)
-    start_idx = max(-1, last_idx)
-
-    # Initialize active span from aggregates
-    active = aggregates.get("active_span") or None
-    min_span_seconds = 2.0
-
-    # Process newly appended events
-    for i in range(start_idx + 1, len(timeline)):
-        ev = timeline[i]
-        label = _get_event_label(ev)
-        score = _get_event_score(ev)
-        t_start = ev.get("t_start", 0.0)
-        t_end = ev.get("t_end", t_start)
-
-        if label is None:
-            # If we have an active span, consider closing on missing label
-            if active:
-                # Close span at previous event end
-                duration = float(active["t_end"] - active["t_start"]) if active["t_end"] is not None else 0.0
-                if duration >= min_span_seconds:
-                    alerts.append({
-                        "kind": "emotion_span",
-                        "label": active["label"],
-                        "t_start": active["t_start"],
-                        "t_end": active["t_end"],
-                        "avg_score": (active["score_sum"] / max(1, active["count"])) if active["count"] else None,
-                        "closed_at": _now_iso(),
-                    })
-                active = None
-            aggregates["last_processed_timeline_index"] = i
-            continue
-
-        if active and label == active.get("label"):
-            # Extend current span
-            active["t_end"] = t_end
-            if isinstance(score, (int, float)):
-                active["score_sum"] += float(score)
-                active["count"] += 1
-        else:
-            # Close previous span if any
-            if active:
-                duration = float(active["t_end"] - active["t_start"]) if active["t_end"] is not None else 0.0
-                if duration >= min_span_seconds:
-                    alerts.append({
-                        "kind": "emotion_span",
-                        "label": active["label"],
-                        "t_start": active["t_start"],
-                        "t_end": active["t_end"],
-                        "avg_score": (active["score_sum"] / max(1, active["count"])) if active["count"] else None,
-                        "closed_at": _now_iso(),
-                    })
-            # Start new span
-            active = {
-                "label": label,
-                "t_start": t_start,
-                "t_end": t_end,
-                "score_sum": float(score) if isinstance(score, (int, float)) else 0.0,
-                "count": 1 if isinstance(score, (int, float)) else 0,
-            }
-
-        aggregates["last_processed_timeline_index"] = i
-
-    # Persist active span tracker
-    aggregates["active_span"] = active
-
-    # Maintain small alert list size
-    if len(alerts) > 2000:
-        del alerts[: len(alerts) - 2000]
-
-def log_delegation(delegated_to: str, query: str):
-    """
-    Log delegation events to track routing decisions.
+    # Behavioral Timeline Correlation
+    insights["behavioral_timeline"] = _generate_behavioral_timeline(behavioral_data)
     
-    Args:
-        delegated_to: The name of the agent being delegated to
-        query: The user query that triggered the delegation
-    """
-    timestamp = datetime.datetime.now().isoformat()
-    log_entry = {
-        "timestamp": timestamp,
-        "delegated_to": delegated_to,
-        "query": query,
-        "event_type": "delegation"
-    }
-    
-    # In a real implementation, this would be logged to a file or database
-    # For now, we'll just return the log entry
-    return f"Delegated to {delegated_to} at {timestamp} for query: {query}"
-
-def transfer_to_state_agent(tool_context: ToolContext) -> None:
-    """Transfer to the state agent for direct state operations."""
-    tool_context.actions.transfer_to_agent = "state_agent"
-
-def transfer_to_conversational_agent(tool_context: ToolContext) -> None:
-    """Transfer to the conversational agent for natural language processing."""
-    tool_context.actions.transfer_to_agent = "conversational_agent"
+    # Pattern Summary
+    insights["pattern_summary"] = _generate_pattern_summary(insights)

@@ -370,9 +370,30 @@ async def main_async():
                         print(f"Behavior profile: {profile}")
                 if "behavioral_data" in session.state:
                     print(f"Behavioral data count: {len(session.state['behavioral_data'])}")
+                if "behavioral_insights" in session.state:
+                    insights = session.state["behavioral_insights"]
+                    print(f"Behavioral insights keys: {list(insights.keys())}")
+                    if "pattern_summary" in insights:
+                        print(f"Pattern summary: {insights['pattern_summary']}")
                 print("🔍 **End Debug**")
             else:
                 print("❌ No session found for debugging")
+        
+        elif "force patterns" in user_input.lower():
+            # Force pattern recognition generation
+            session = session_service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID)
+            if session:
+                from manager.tools.tools import _update_behavioral_insights
+                _update_behavioral_insights(session.state)
+                session_service.update_session(APP_NAME, USER_ID, SESSION_ID, session.state)
+                print("✅ **Pattern recognition forced and updated**")
+                print("🔍 **New behavioral insights generated**")
+                if "behavioral_insights" in session.state:
+                    insights = session.state["behavioral_insights"]
+                    if "pattern_summary" in insights:
+                        print(f"📊 **Pattern Summary**: {insights['pattern_summary']}")
+            else:
+                print("❌ No session found for pattern generation")
         else:
             # Normal agent call
             await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
