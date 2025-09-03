@@ -3,93 +3,139 @@ import json
 import re
 from datetime import datetime
 from typing import List, Dict, Any, Optional
-import litellm
+import os
+import google.generativeai as genai
+from dotenv import load_dotenv
 
-# Enhanced RAG function for behavioral analysis
+# Load environment variables
+load_dotenv()
+
+# Configure Gemini API
+genai.configure(api_key=os.getenv("GOOGLE_API_KEY"))
+
+# Enhanced RAG function for behavioral analysis using direct Gemini API
 def rag_retrieve(query, session_state):
-    """Retrieve behavioral context for analysis."""
+    """Retrieve behavioral context for analysis using direct Gemini API."""
     current_behavior = session_state.get("current_behavior", {})
     behavioral_data = session_state.get("behavioral_data", [])
     behavioral_insights = session_state.get("behavioral_insights", {})
+    candidate_info = session_state.get("candidate_info", {})
 
-    # Build behavioral context
+    # Build comprehensive behavioral context
     behavioral_context = {
         "current_behavior": current_behavior,
         "behavioral_history": behavioral_data[-5:],  # Last 5 entries
-        "insights": behavioral_insights
+        "insights": behavioral_insights,
+        "candidate_info": candidate_info
     }
 
-    # Create behavioral analysis prompt
-    rag_prompt = f"""Analyze this behavioral data for the query: {query}
+    # Build concise window summaries to help temporal reasoning
+    windows_summary = []
+    try:
+        ws = behavioral_insights.get("windows_summary", [])
+        for w in ws[-3:]:
+            windows_summary.append({
+                "id": w.get("id"),
+                "start": w.get("start"),
+                "end": w.get("end"),
+                "duration_sec": w.get("duration_sec"),
+                "avg_confidence": w.get("avg_confidence"),
+                "avg_engagement": w.get("avg_engagement"),
+                "avg_stress": w.get("avg_stress"),
+                "emotion_start": w.get("emotion_start"),
+                "emotion_end": w.get("emotion_end"),
+            })
+    except Exception:
+        windows_summary = []
 
-Behavioral Context: {json.dumps(behavioral_context, indent=2)}
+    # Create intelligent behavioral analysis prompt
+    rag_prompt = f"""You are an expert behavioral analyst. Analyze this behavioral data and answer the user's query: "{query}"
 
-Provide relevant behavioral insights and patterns that answer the query."""
+Current Behavior (latest): {json.dumps(current_behavior, indent=2)}
+
+Recent History (last 5): {json.dumps(behavioral_data[-5:], indent=2)}
+
+Computed Insights: {json.dumps(behavioral_insights, indent=2)}
+
+Window Summaries (recent): {json.dumps(windows_summary, indent=2)}
+
+Instructions:
+1) Understand the user's intent (no keyword matching; infer meaning)
+2) Use timestamps and window summaries to reason about answer periods
+3) Summarize how confidence, stress, and engagement changed within the latest window
+4) Compare latest window vs previous window if helpful
+5) Be concise, natural, and specific; avoid dumping raw JSON
+6) If data is insufficient, say what is missing and proceed with best effort
+"""
 
     try:
-        response = litellm.completion(
-            model="gemini/gemini-2.0-flash",
-            messages=[{"role": "user", "content": rag_prompt}]
-        )
-        return response.choices[0].message.content
+        # Use direct Gemini API
+        model = genai.GenerativeModel('gemini-2.0-flash')
+        response = model.generate_content(rag_prompt)
+        return response.text
     except Exception as e:
-        # Fallback to local analysis
-        return f"Behavioral analysis based on available data: {json.dumps(behavioral_context)}"
+        # Intelligent fallback - analyze the data ourselves
+        return generate_intelligent_fallback_analysis(query, behavioral_context)
+
+def generate_intelligent_fallback_analysis(query, behavioral_context):
+    """Generate intelligent analysis when Gemini API fails."""
+    current_behavior = behavioral_context.get("current_behavior", {})
+    behavioral_insights = behavioral_context.get("insights", {})
+    
+    # Extract key behavioral metrics
+    behavior_profile = current_behavior.get("behavior_profile", {})
+    confidence = behavior_profile.get("confidence_level", 0)
+    engagement = behavior_profile.get("engagement_level", 0)
+    stress = behavior_profile.get("stress_level", 0)
+    valence = behavior_profile.get("emotional_valence", "neutral")
+    
+    # Produce context-aware analysis without keyword reliance
+    # Summarize latest window if available
+    insights = behavioral_context.get("insights", {})
+    windows = insights.get("windows_summary", [])
+    latest_win = windows[-1] if windows else None
+    prev_win = windows[-2] if len(windows) >= 2 else None
+
+    parts = []
+    if latest_win:
+        parts.append("🪟 Latest answer window:")
+        parts.append(f"- Duration: {latest_win.get('duration_sec', 0)}s")
+        parts.append(f"- Avg Confidence {latest_win.get('avg_confidence', 0):.2f}, Engagement {latest_win.get('avg_engagement', 0):.2f}, Stress {latest_win.get('avg_stress', 0):.2f}")
+        parts.append(f"- Emotion: {latest_win.get('emotion_start', 'neutral')} → {latest_win.get('emotion_end', 'neutral')}")
+    else:
+        parts.append("No answer windows detected yet; summarizing current behavior.")
+
+    if prev_win and latest_win:
+        dc = (latest_win.get('avg_confidence', 0) - prev_win.get('avg_confidence', 0))
+        ds = (latest_win.get('avg_stress', 0) - prev_win.get('avg_stress', 0))
+        de = (latest_win.get('avg_engagement', 0) - prev_win.get('avg_engagement', 0))
+        parts.append("📊 Change vs previous window:")
+        parts.append(f"- ΔConfidence {dc:+.2f}, ΔEngagement {de:+.2f}, ΔStress {ds:+.2f}")
+
+    # Always include current snapshot
+    parts.append("📈 Current snapshot:")
+    parts.append(f"- Confidence {confidence:.2f}, Engagement {engagement:.2f}, Stress {stress:.2f}, Emotion {valence}")
+
+    return "\n".join(parts)
 
 def conversational_response(user_input, session_state):
-    user_input_lower = user_input.lower().strip()
+    """Intelligent conversational response without static keywords."""
     state_info = extract_state_info(session_state)
     
-    # Check if we have behavioral data and user is asking for analysis
-    keywords_to_check = ["analyze", "behavior", "insights", "summary", "patterns"]
-    
-    if state_info["has_data"] and any(keyword in user_input_lower for keyword in keywords_to_check):
-        return generate_enhanced_behavioral_analysis(state_info)
-    
-    # Handle specific behavioral analysis requests
-    if "confidence" in user_input_lower and state_info["has_data"]:
-        current_behavior = state_info["current_behavior"]
-        behavior_profile = current_behavior.get("behavior_profile", {})
-        confidence = behavior_profile.get("confidence_level", 0)
-        
-        if confidence > 0.7:
-            return f"🎯 **Confidence Analysis**: The candidate shows high confidence ({confidence:.2f}). This indicates strong self-assurance and belief in their abilities."
-        elif confidence < 0.4:
-            return f"😰 **Confidence Analysis**: The candidate shows low confidence ({confidence:.2f}). This suggests nervousness or uncertainty that may need addressing."
-        else:
-            return f"😐 **Confidence Analysis**: The candidate shows moderate confidence ({confidence:.2f}). This is within normal range for interview situations."
-    
-    if "stress" in user_input_lower and state_info["has_data"]:
-        current_behavior = state_info["current_behavior"]
-        behavior_profile = current_behavior.get("behavior_profile", {})
-        stress = behavior_profile.get("stress_level", 0)
-        
-        if stress > 0.6:
-            return f"⚠️ **Stress Analysis**: High stress levels detected ({stress:.2f}). The candidate may be experiencing anxiety or pressure."
-        elif stress < 0.3:
-            return f"😌 **Stress Analysis**: Low stress levels ({stress:.2f}). The candidate appears calm and composed."
-        else:
-            return f"😐 **Stress Analysis**: Moderate stress levels ({stress:.2f}). This is typical for interview situations."
-    
-    if "engagement" in user_input_lower and state_info["has_data"]:
-        current_behavior = state_info["current_behavior"]
-        behavior_profile = current_behavior.get("behavior_profile", {})
-        engagement = behavior_profile.get("engagement_level", 0)
-        
-        if engagement > 0.8:
-            return f"🔥 **Engagement Analysis**: High engagement detected ({engagement:.2f}). The candidate is very interested and involved."
-        elif engagement < 0.5:
-            return f"📉 **Engagement Analysis**: Low engagement ({engagement:.2f}). The candidate may need more stimulating questions."
-        else:
-            return f"😐 **Engagement Analysis**: Moderate engagement ({engagement:.2f}). The candidate shows reasonable interest."
-    
-    # If no behavioral data, provide helpful message
+    # Check if we have behavioral data
     if not state_info["has_data"]:
-        return "🤖 No behavioral data available yet. Please use 'simulate json' or 'simulate event' to load some behavioral data first."
+        return "🤖 No behavioral data available yet. Please start the JSON producer to receive real-time behavioral data."
     
-    # Default response with behavioral context
-    retrieved_context = rag_retrieve(user_input, session_state)
-    return f"🤖 **Behavioral Analysis**: {retrieved_context}"
+    # Use intelligent RAG retrieval with Gemini API
+    try:
+        intelligent_response = rag_retrieve(user_input, session_state)
+        return f"🤖 **Intelligent Behavioral Analysis**: {intelligent_response}"
+    except Exception as e:
+        # Fallback to intelligent analysis
+        return generate_intelligent_fallback_analysis(user_input, {
+            "current_behavior": state_info["current_behavior"],
+            "insights": state_info["behavioral_insights"]
+        })
 
 def extract_state_info(session_state):
     """Extract behavioral state information from session for analysis."""
@@ -187,7 +233,7 @@ def generate_enhanced_behavioral_analysis(state_info):
     behavioral_data_count = state_info["behavioral_data_count"]
 
     if not state_info["has_data"]:
-        return "🤖 No behavioral data available yet. Please ingest some behavioral data first using 'simulate json'."
+        return "🤖 No behavioral data available yet. Please start the JSON producer to receive real-time behavioral data."
 
     parts: List[str] = []
     parts.append("🤖 **Enhanced Behavioral Analysis with Pattern Recognition**")
@@ -330,34 +376,48 @@ conversational_agent = Agent(
     model="gemini-2.0-flash",  # Use API for enhanced responses
     instruction="""You are an advanced conversational AI assistant for behavioral analysis. Your role is to:
 
-1. **Understand Natural Language**: Interpret user queries about behavioral analysis, including variations and different phrasings.
+1. **Natural Language Understanding**: Interpret ANY user query about behavioral analysis, regardless of phrasing or keywords. Understand intent, not just specific words.
 
-2. **Provide Behavioral Insights**: Analyze candidate behavior, emotions, and patterns from multimodal data.
+2. **Intelligent Behavioral Analysis**: 
+   - Analyze candidate behavior, emotions, and patterns from multimodal data
+   - Provide context-aware insights based on the user's actual question
+   - Generate behavioral summaries and pattern recognition
+   - Track confidence, stress, engagement, and emotional transitions
 
-3. **Handle Behavioral Analysis**: 
-   - Generate behavioral summaries
-   - Provide pattern recognition insights
-   - Analyze confidence, stress, and engagement levels
-   - Track emotional transitions
+3. **Conversational Intelligence**: 
+   - Use natural, helpful language
+   - Provide context-aware responses
+   - Ask clarifying questions when needed
+   - Be conversational and engaging
 
-4. **Be Conversational**: Use natural, helpful language and provide context-aware responses.
+4. **Intent Recognition**: 
+   - Understand what the user is actually asking about
+   - Provide relevant information based on context
+   - Handle variations in how questions are phrased
+   - No keyword matching - true understanding
 
-5. **Error Handling**: Gracefully handle unclear requests and provide helpful suggestions.
+5. **Behavioral Expertise**: 
+   - Interpret behavioral metrics meaningfully
+   - Identify patterns and trends
+   - Provide actionable insights
+   - Explain behavioral data in human terms
 
 **Key Capabilities:**
-- Behavioral pattern recognition
-- Real-time behavioral analysis
-- Confidence, stress, and engagement tracking
-- Emotional transition analysis
+- Natural language understanding without static keywords
+- Real-time behavioral pattern recognition
+- Confidence, stress, and engagement analysis
+- Emotional transition tracking
 - Behavioral timeline visualization
+- Context-aware responses
 
 **Response Style:**
-- Use markdown formatting for better readability
+- Use markdown formatting for readability
 - Include emojis for visual appeal
 - Provide clear, actionable behavioral insights
 - Be conversational and helpful
+- Answer the user's actual question, not just match keywords
 
-Remember: You have access to the current session state and should provide direct, useful behavioral analysis responses.""",
+**Important**: You have access to the current session state and should provide direct, useful behavioral analysis responses. Understand the user's intent naturally, don't rely on keyword matching.""",
     tools=[]  # No tools needed as we handle everything in the response function
 )
 

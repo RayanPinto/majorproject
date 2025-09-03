@@ -25,6 +25,11 @@ def _ensure_behavioral_state_structures(state: Dict[str, Any]) -> None:
         state["behavior_timeline"] = []
     if "alerts" not in state:
         state["alerts"] = []
+    if "question_windows" not in state:
+        state["question_windows"] = {
+            "current_window_id": None,
+            "windows": {},
+        }
     if "last_update" not in state:
         state["last_update"] = _now_iso()
     if "last_behavior_ingest" not in state:
@@ -67,11 +72,17 @@ def ingest_from_model_output(session_service, app_name: str, user_id: str, sessi
     # Store current behavioral data
     session.state["current_behavior"] = current_behavior
 
+    # Resolve timestamps: prefer source timestamp from payload, also keep ingest time
+    source_ts = current_behavior.get("timestamp")
+    if not source_ts:
+        source_ts = _now_iso()
+    ingest_time = _now_iso()
+
     # Add to behavioral timeline with timestamp correlation
     behavior_entry = {
-        "timestamp": _now_iso(),
+        "timestamp": source_ts,           # source-provided event time
         "behavior_data": current_behavior,
-        "ingest_time": _now_iso()
+        "ingest_time": ingest_time       # system ingest time
     }
 
     session.state.setdefault("behavioral_data", [])
@@ -81,7 +92,10 @@ def ingest_from_model_output(session_service, app_name: str, user_id: str, sessi
     if len(session.state["behavioral_data"]) > 50:
         session.state["behavioral_data"] = session.state["behavioral_data"][-50:]
 
-    # Update behavioral insights with pattern recognition
+    # Update question/answer window segmentation before computing insights
+    _update_question_windows(session.state, behavior_entry)
+
+    # Update behavioral insights with pattern recognition (now includes window summaries)
     _update_behavioral_insights(session.state)
 
     # Update timestamps
@@ -94,6 +108,96 @@ def ingest_from_model_output(session_service, app_name: str, user_id: str, sessi
     
     session_service.update_session(app_name, user_id, session_id, session.state)
     return True
+
+def _parse_iso(ts: str) -> Optional[datetime.datetime]:
+    try:
+        # Handle both Z and offset forms
+        if ts.endswith('Z'):
+            return datetime.datetime.fromisoformat(ts.replace('Z', '+00:00'))
+        return datetime.datetime.fromisoformat(ts)
+    except Exception:
+        return None
+
+def _seconds_between(a: str, b: str) -> Optional[float]:
+    da = _parse_iso(a)
+    db = _parse_iso(b)
+    if not da or not db:
+        return None
+    return abs((da - db).total_seconds())
+
+def _update_question_windows(state: Dict[str, Any], behavior_entry: Dict[str, Any]) -> None:
+    """Maintain lightweight segmentation of behavior into answer windows.
+
+    Heuristics:
+    - Start a new window if time gap to previous event >= GAP_THRESHOLD_SEC
+    - Also start if a long pause (>= PAUSE_THRESHOLD_SEC) is present in latest payload
+    Aggregates per-window stats incrementally.
+    """
+    GAP_THRESHOLD_SEC = 10.0
+    PAUSE_THRESHOLD_SEC = 1.3
+
+    qw = state.setdefault("question_windows", {"current_window_id": None, "windows": {}})
+    current_id = qw.get("current_window_id")
+    windows = qw.setdefault("windows", {})
+
+    # Determine if boundary should start a new window
+    latest_ts = behavior_entry.get("timestamp")
+    latest_payload = behavior_entry.get("behavior_data", {})
+    latest_profile = latest_payload.get("behavior_profile", {})
+    latest_pauses = latest_payload.get("audio_features", {}).get("pauses", [])
+
+    long_pause = any((p.get("duration_sec", 0) or 0) >= PAUSE_THRESHOLD_SEC for p in latest_pauses)
+
+    # Find timestamp of previous entry if any
+    prev_ts = None
+    if state.get("behavioral_data"):
+        prev_ts = state["behavioral_data"][-1].get("timestamp")
+
+    gap_large = False
+    if prev_ts:
+        gap = _seconds_between(latest_ts, prev_ts)
+        gap_large = (gap is not None and gap >= GAP_THRESHOLD_SEC)
+
+    start_new = (current_id is None) or gap_large or long_pause
+
+    if start_new:
+        new_id = f"win_{len(windows) + 1}"
+        windows[new_id] = {
+            "start_ts": latest_ts,
+            "end_ts": latest_ts,
+            "count": 0,
+            "metrics": {
+                "sum_conf": 0.0,
+                "sum_eng": 0.0,
+                "sum_stress": 0.0,
+            },
+            "avg_conf": 0.0,
+            "avg_eng": 0.0,
+            "avg_stress": 0.0,
+            "emotion_first": latest_profile.get("emotional_valence", "neutral"),
+            "emotion_last": latest_profile.get("emotional_valence", "neutral"),
+        }
+        qw["current_window_id"] = new_id
+        current_id = new_id
+
+    # Update current window aggregates
+    w = windows.get(current_id)
+    if not w:
+        return
+    w["end_ts"] = latest_ts
+    w["count"] = int(w.get("count", 0)) + 1
+    conf = float(latest_profile.get("confidence_level", 0) or 0)
+    eng = float(latest_profile.get("engagement_level", 0) or 0)
+    stress = float(latest_profile.get("stress_level", 0) or 0)
+    m = w["metrics"]
+    m["sum_conf"] += conf
+    m["sum_eng"] += eng
+    m["sum_stress"] += stress
+    if w["count"] > 0:
+        w["avg_conf"] = m["sum_conf"] / w["count"]
+        w["avg_eng"] = m["sum_eng"] / w["count"]
+        w["avg_stress"] = m["sum_stress"] / w["count"]
+    w["emotion_last"] = latest_profile.get("emotional_valence", w.get("emotion_last", "neutral"))
 
 def _analyze_trend(values: List[float]) -> str:
     """Analyze trend in a list of values."""
@@ -350,5 +454,34 @@ def _update_behavioral_insights(state: Dict[str, Any]) -> None:
     # Behavioral Timeline Correlation
     insights["behavioral_timeline"] = _generate_behavioral_timeline(behavioral_data)
     
+    # Window summaries (last 3 windows)
+    qw = state.get("question_windows", {})
+    windows = qw.get("windows", {})
+    if windows:
+        # Keep insertion order by id creation pattern; gather last 3
+        ordered = list(windows.items())
+        recent_windows = ordered[-3:]
+        win_summaries: List[Dict[str, Any]] = []
+        for win_id, w in recent_windows:
+            duration_sec = None
+            if w.get("start_ts") and w.get("end_ts"):
+                d = _seconds_between(w["end_ts"], w["start_ts"])
+                duration_sec = d if d is not None else 0.0
+            trend_word = "stable"
+            # Simple per-window trend: compare last emotion or avg conf vs previous window if exists
+            win_summaries.append({
+                "id": win_id,
+                "start": w.get("start_ts"),
+                "end": w.get("end_ts"),
+                "duration_sec": duration_sec,
+                "avg_confidence": round(float(w.get("avg_conf", 0.0)), 2),
+                "avg_engagement": round(float(w.get("avg_eng", 0.0)), 2),
+                "avg_stress": round(float(w.get("avg_stress", 0.0)), 2),
+                "emotion_start": w.get("emotion_first", "neutral"),
+                "emotion_end": w.get("emotion_last", "neutral"),
+                "trend": trend_word,
+            })
+        insights["windows_summary"] = win_summaries
+
     # Pattern Summary
     insights["pattern_summary"] = _generate_pattern_summary(insights)
