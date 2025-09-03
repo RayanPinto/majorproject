@@ -36,7 +36,7 @@ sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions
 
 # MongoDB session service used by the Runner
 session_service = MongoDBSessionService(
-    mongo_client=mongo_client,
+    mongo_uri=MONGODB_URI,
     database_name=os.getenv("MONGODB_DB", "adk_app"),
     collection_name=os.getenv("MONGODB_COLLECTION", "sessions")
 )

@@ -2,6 +2,103 @@
 
 ## Date: September 3, 2025 - UPDATED
 
+## ⚠️ **CRITICAL WARNING FOR ALL DEVELOPERS**
+
+**🚨 THIS SYSTEM HAS PROTECTED CORE COMPONENTS THAT MUST NEVER BE MODIFIED WITHOUT EXPLICIT USER PERMISSION!**
+
+**🛡️ PROTECTED COMPONENTS:**
+
+- State Variables Structure
+- Agent System & State Management
+- MongoDB Integration
+- Behavioral Analysis Tools
+- Conversational Agent Implementation
+
+**📋 READ THE SAFETY GUIDELINES BELOW BEFORE MAKING ANY CHANGES!**
+
+---
+
+## 🚨 **CRITICAL SAFETY GUIDELINES - NEVER CHANGE WITHOUT EXPLICIT PERMISSION**
+
+### **🛡️ PROTECTED COMPONENTS (DO NOT MODIFY)**
+
+#### **1. State Variables Structure - ABSOLUTELY OFF LIMITS**
+
+- **`metadata`**: Contains candidate_id, session_id, timestamp, duration_sec
+- **`video_features`**: Contains facial_expressions, gaze_tracking, head_movements, body_language
+- **`audio_features`**: Contains speech_segments, prosody, pauses, voice_tone
+- **`behavior_profile`**: Contains confidence_level, engagement_level, stress_level, emotional_valence
+- **`current_behavior`**: Core behavioral state container
+- **`behavioral_data`**: Historical behavioral data array
+- **`behavioral_insights`**: Pattern recognition results
+
+#### **2. Agent System & State Management - CRITICAL**
+
+- **`ingest_from_model_output()` function**: Core behavioral data processing
+- **`_ensure_behavioral_state_structures()` function**: State structure initialization
+- **`_update_behavioral_insights()` function**: Pattern recognition engine
+- **Agent's state access patterns**: How agent reads from session state
+- **State update mechanisms**: How agent modifies state variables
+
+#### **3. MongoDB Integration - SACRED**
+
+- **`MongoDBSessionService` class**: Complete implementation
+- **Session CRUD operations**: create_session, get_session, update_session, delete_session
+- **Database connection patterns**: MongoDB URI handling and connection management
+- **Collection management**: Sessions collection structure and operations
+- **State persistence logic**: How state is saved to and retrieved from MongoDB
+
+#### **4. Tools & Behavioral Analysis - PROTECTED**
+
+- **`manager/tools/tools.py`**: Complete file - contains core behavioral analysis logic
+- **Pattern recognition algorithms**: Trend analysis, spike detection, emotional transitions
+- **Behavioral insights generation**: Confidence, stress, engagement analysis
+- **Data processing pipelines**: How behavioral data flows through the system
+
+#### **5. Conversational Agent - DO NOT TOUCH**
+
+- **`manager/sub_agents/conversational_agent.py`**: Complete agent implementation
+- **State information extraction**: `extract_state_info()` function
+- **RAG system**: `rag_retrieve()` function with LLM integration
+- **Behavioral response generation**: `conversational_response()` function
+- **Agent's state reading patterns**: How it accesses behavioral data
+
+### **⚠️ WHY THESE ARE PROTECTED:**
+
+1. **Step 1 & Step 2 Implementations**: Core system that took significant development effort
+2. **Production Ready**: These components are working perfectly in real-time
+3. **Complex Dependencies**: Changes could break the entire behavioral analysis pipeline
+4. **State Consistency**: Modifications could corrupt behavioral data or break pattern recognition
+5. **User Trust**: System is currently stable and reliable - don't risk breaking it
+
+### **🔒 MODIFICATION RULES:**
+
+- **NEVER modify state variable structures** without explicit user permission
+- **NEVER change MongoDB session service** without explicit user permission
+- **NEVER modify agent's state access patterns** without explicit user permission
+- **NEVER alter behavioral analysis tools** without explicit user permission
+- **ONLY modify UI/UX, documentation, or add new features** when explicitly requested
+- **ALWAYS test changes thoroughly** before implementing
+- **ALWAYS backup before any modifications**
+
+### **✅ SAFE TO MODIFY (When Requested):**
+
+- **UI/UX improvements**: Colors, display formatting, dashboard layouts
+- **Documentation**: README files, progress reports, usage instructions
+- **New features**: Additional commands, display options, export functions
+- **Code cleanup**: Removing unused imports, optimizing non-critical functions
+- **Testing**: Adding test scripts, validation functions
+- **Configuration**: Environment variables, connection settings
+
+### **🚫 NEVER MODIFY (Protected Core):**
+
+- **State variable definitions** in `initial_state`
+- **Behavioral data structures** in `ingest_from_model_output`
+- **MongoDB session operations** in `MongoDBSessionService`
+- **Agent state access patterns** in `conversational_agent.py`
+- **Pattern recognition algorithms** in `tools.py`
+- **JSON data conversion logic** in `_convert_json_format`
+
 ---
 
 ## 🚀 **NEXT STEPS & FUTURE DEVELOPMENT**
@@ -36,6 +133,8 @@
 ## 🏥 **CURRENT SYSTEM HEALTH STATUS (September 3, 2025)**
 
 ### **✅ System Health: EXCELLENT**
+
+### **🛡️ Protected Core Components Status: 100% OPERATIONAL**
 
 - **Core Functionality**: 100% operational
 - **Real-time Performance**: < 100ms per JSON processing
