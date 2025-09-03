@@ -1,11 +1,18 @@
+#!/usr/bin/env python3
+"""
+Real-time Behavioral Analysis System
+Clean, focused system for real-time JSON ingestion and behavioral analysis
+"""
+
 import asyncio
 import os
 import json
-import re
+import socket
+import threading
+import time
 from datetime import datetime, timezone
 from uuid import uuid4
 from dotenv import load_dotenv
-from typing import Dict, Any, Optional, List
 
 from manager.sub_agents.conversational_agent import conversational_agent
 from google.adk.runners import Runner
@@ -15,173 +22,6 @@ from mongodb_session_service import MongoDBSessionService
 
 from utils import add_user_query_to_history, call_agent_async, display_behavioral_analysis, display_emotional_timeline
 from manager.tools.tools import ingest_from_model_output, ensure_session_structures
-
-# ===== ERROR HANDLING CLASSES =====
-
-class StateManagementError(Exception):
-    """Base exception for state management errors"""
-    def __init__(self, message: str, error_code: str = "UNKNOWN", details: Optional[Dict[str, Any]] = None):
-        self.message = message
-        self.error_code = error_code
-        self.details = details or {}
-        super().__init__(self.message)
-
-class ValidationError(StateManagementError):
-    """Exception for validation errors"""
-    def __init__(self, message: str, error_code: str = "VAL_001", details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, error_code, details)
-
-class JSONProcessingError(StateManagementError):
-    """Exception for JSON processing errors"""
-    def __init__(self, message: str, error_code: str = "JSON_001", details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, error_code, details)
-
-class StateUpdateError(StateManagementError):
-    """Exception for state update errors"""
-    def __init__(self, message: str, error_code: str = "STATE_001", details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, error_code, details)
-
-class DatabaseError(StateManagementError):
-    """Exception for database errors"""
-    def __init__(self, message: str, error_code: str = "DB_001", details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, error_code, details)
-
-class UserInputError(StateManagementError):
-    """Exception for user input errors"""
-    def __init__(self, message: str, error_code: str = "INPUT_001", details: Optional[Dict[str, Any]] = None):
-        super().__init__(message, error_code, details)
-
-# ===== VALIDATION FUNCTIONS =====
-
-def validate_json_structure(json_data: Dict[str, Any], template_keys: List[str]) -> Dict[str, Any]:
-    """Validate JSON structure against template keys"""
-    result = {
-        "valid": True,
-        "errors": [],
-        "warnings": []
-    }
-    
-    # Check for missing keys
-    missing_keys = [key for key in template_keys if key not in json_data]
-    if missing_keys:
-        result["warnings"].append(f"Missing keys: {', '.join(missing_keys)}")
-    
-    # Check for extra keys
-    extra_keys = [key for key in json_data.keys() if key not in template_keys]
-    if extra_keys:
-        result["warnings"].append(f"Extra keys found: {', '.join(extra_keys)}")
-    
-    # Check data types (all should be strings for this template)
-    for key, value in json_data.items():
-        if key in template_keys and not isinstance(value, (str, int, float, bool, type(None))):
-            result["errors"].append(f"Invalid data type for {key}: expected string, got {type(value).__name__}")
-            result["valid"] = False
-    
-    return result
-
-def validate_user_input(user_input: str) -> Dict[str, Any]:
-    """Validate user input for commands"""
-    result = {
-        "valid": True,
-        "errors": [],
-        "warnings": []
-    }
-    
-    if not user_input or not user_input.strip():
-        result["valid"] = False
-        result["errors"].append("Empty input")
-        return result
-    
-    user_input = user_input.strip()
-    
-    # Check for JSON processing command
-    if user_input.lower().startswith("process this json:"):
-        json_part = user_input[len("process this json:"):].strip()
-        if not json_part:
-            result["valid"] = False
-            result["errors"].append("No JSON data provided")
-        else:
-            try:
-                # Try to parse as JSON
-                json.loads(json_part)
-            except json.JSONDecodeError as e:
-                result["valid"] = False
-                result["errors"].append(f"Invalid JSON format: {str(e)}")
-    
-    # Check for state update command
-    elif user_input.lower().startswith("update state:"):
-        update_part = user_input[len("update state:"):].strip()
-        if not update_part:
-            result["valid"] = False
-            result["errors"].append("No update data provided")
-        elif "=" not in update_part:
-            result["valid"] = False
-            result["errors"].append("Update format should be 'key=value'")
-        else:
-            # Check for empty key or value
-            parts = update_part.split("=", 1)
-            if len(parts) != 2:
-                result["valid"] = False
-                result["errors"].append("Update format should be 'key=value'")
-            elif not parts[0].strip():
-                result["valid"] = False
-                result["errors"].append("Empty key in update command")
-            elif not parts[1].strip():
-                result["valid"] = False
-                result["errors"].append("Empty value in update command")
-            else:
-                # Check for extra text after the value
-                key = parts[0].strip()
-                value_part = parts[1].strip()
-                # Split by whitespace to check for extra text
-                value_parts = value_part.split()
-                if len(value_parts) > 1:
-                    result["valid"] = False
-                    result["errors"].append("Update format should be 'key=value' with no extra text")
-    
-    return result
-
-def format_error_response(error: Exception, user_friendly: bool = True) -> str:
-    """Format error response for user display"""
-    if user_friendly:
-        if isinstance(error, ValidationError):
-            return f"Validation Error: {error.message}"
-        elif isinstance(error, JSONProcessingError):
-            return f"JSON Processing Error: {error.message}"
-        elif isinstance(error, StateUpdateError):
-            return f"State Update Error: {error.message}"
-        elif isinstance(error, DatabaseError):
-            return f"Database Error: {error.message}"
-        elif isinstance(error, UserInputError):
-            return f"Input Error: {error.message}"
-        elif isinstance(error, StateManagementError):
-            return f"State Management Error: {error.message}"
-        else:
-            return "System Error: An unexpected error occurred. Please try again."
-    else:
-        if isinstance(error, StateManagementError):
-            return f"Error: {error.message} | Code: {error.error_code} | Details: {error.details}"
-        else:
-            return f"Error: {str(error)}"
-
-def log_error(error: Exception, context: str, additional_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-    """Log error with context for debugging"""
-    error_info = {
-        "timestamp": datetime.now().isoformat(),
-        "context": context,
-        "error_type": type(error).__name__,
-        "error_message": str(error),
-        "additional_context": additional_context or {}
-    }
-    
-    if isinstance(error, StateManagementError):
-        error_info["error_code"] = error.error_code
-        error_info["details"] = error.details
-    
-    # In a real implementation, this would be logged to a file or database
-    print(f"ERROR LOG: {error_info}")
-    
-    return error_info
 
 load_dotenv()
 
@@ -195,51 +35,26 @@ mongo_db = mongo_client.get_database(os.getenv("MONGODB_DB", "adk_app"))
 sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions"))
 
 # MongoDB session service used by the Runner
-session_service = MongoDBSessionService(MONGODB_URI)
+session_service = MongoDBSessionService(
+    mongo_client=mongo_client,
+    database_name=os.getenv("MONGODB_DB", "adk_app"),
+    collection_name=os.getenv("MONGODB_COLLECTION", "sessions")
+)
 
-# For testing: Load a sample JSON file (simulating model output)
-SAMPLE_JSON_FILE = "sample_json_output.json"  # Assume this file exists with structured JSON
+# ===== PART 2: Initial State Structure =====
+# Define the initial state structure for behavioral analysis
 
-# ===== PART 2: Define Initial State =====
 initial_state = {
     "candidate_info": {
-        "candidate_id": "",
-        "session_id": "",
+        "candidate_id": "CAND1234567890",
+        "session_id": "INT2025-09-01-008",
         "interview_start": None
     },
     "behavioral_data": [],
-    "current_behavior": {
-        "metadata": {
-            "candidate_id": "",
-            "session_id": "",
-            "timestamp": "",
-            "duration_sec": 0
-        },
-        "video_features": {
-            "frame_rate": 0,
-            "facial_expressions": [],
-            "gaze_tracking": [],
-            "head_movements": [],
-            "body_language": {}
-        },
-        "audio_features": {
-            "speech_segments": [],
-            "prosody": {},
-            "pauses": [],
-            "voice_tone": "",
-            "disfluencies": []
-        },
-        "behavior_profile": {
-            "confidence_level": 0.0,
-            "engagement_level": 0.0,
-            "stress_level": 0.0,
-            "emotional_valence": "",
-            "notable_observations": []
-        }
-    },
+    "current_behavior": {},
     "behavior_timeline": [],
     "behavioral_insights": {
-        "emotional_pattern": "",
+        "emotional_pattern": "neutral",
         "confidence_trend": [],
         "stress_indicators": [],
         "engagement_peaks": []
@@ -249,6 +64,201 @@ initial_state = {
     "question_windows": {},
     "alerts": []
 }
+
+# ===== JSON RECEIVER FUNCTIONALITY =====
+
+class JSONReceiver:
+    """Receives JSON data from producer and processes it"""
+    
+    def __init__(self, session_service, app_name: str, user_id: str, session_id: str):
+        self.session_service = session_service
+        self.app_name = app_name
+        self.user_id = user_id
+        self.session_id = session_id
+        self.is_running = False
+        self.receiver_thread = None
+        self.socket = None
+        self.processed_count = 0
+        
+    def start_receiving(self, port: int = 12345):
+        """Start receiving JSON data on specified port"""
+        if self.is_running:
+            print("⚠️ JSON receiver is already running")
+            return
+            
+        self.is_running = True
+        self.receiver_thread = threading.Thread(target=self._receive_loop, args=(port,), daemon=True)
+        self.receiver_thread.start()
+        print(f"✅ JSON receiver started on port {port}")
+        print("📡 Waiting for producer to connect...")
+        
+    def stop_receiving(self):
+        """Stop receiving JSON data"""
+        self.is_running = False
+        if self.socket:
+            self.socket.close()
+        print("⏹️ JSON receiver stopped")
+        
+    def _receive_loop(self, port: int):
+        """Main receiving loop"""
+        try:
+            # Create socket server
+            self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.socket.bind(('localhost', port))
+            self.socket.listen(1)
+            self.socket.settimeout(1.0)  # 1 second timeout
+            
+            print(f"🔌 Socket server listening on port {port}")
+            
+            while self.is_running:
+                try:
+                    # Accept connection
+                    client_socket, addr = self.socket.accept()
+                    print(f"🔗 Producer connected from {addr}")
+                    
+                    # Set client socket timeout
+                    client_socket.settimeout(5.0)  # 5 second timeout for client
+                    
+                    # Receive data
+                    while self.is_running:
+                        try:
+                            data = client_socket.recv(4096)
+                            if not data:
+                                print("📭 No data received, connection may be closed")
+                                break
+                                
+                            # Process received JSON
+                            json_str = data.decode('utf-8').strip()
+                            if json_str:
+                                self._process_json(json_str)
+                            else:
+                                print("📭 Empty JSON string received")
+                                
+                        except socket.timeout:
+                            continue
+                        except Exception as e:
+                            print(f"❌ Error receiving data: {e}")
+                            break
+                            
+                    client_socket.close()
+                    print("🔌 Producer disconnected")
+                    
+                except socket.timeout:
+                    continue
+                except Exception as e:
+                    if self.is_running:
+                        print(f"❌ Connection error: {e}")
+                        
+        except Exception as e:
+            print(f"❌ Socket error: {e}")
+        finally:
+            if self.socket:
+                self.socket.close()
+                
+    def _process_json(self, json_str: str):
+        """Process received JSON string"""
+        try:
+            # Parse JSON
+            json_data = json.loads(json_str)
+            print(f"📥 Received JSON from producer: {json_data.get('metadata', {}).get('candidate_id', 'Unknown')}")
+            
+            # Convert to your system's expected format
+            converted_data = self._convert_json_format(json_data)
+            print(f"🔄 Converted JSON structure with {len(converted_data)} fields")
+            
+            # Process using existing system
+            success = ingest_from_model_output(
+                self.session_service,
+                self.app_name,
+                self.user_id,
+                self.session_id,
+                converted_data
+            )
+            
+            if success:
+                self.processed_count += 1
+                print(f"✅ Processed JSON #{self.processed_count}")
+                
+                # Show behavioral metrics
+                print(f"   Confidence: {converted_data.get('confidence_level', 0.0)}")
+                print(f"   Engagement: {converted_data.get('engagement_level', 0.0)}")
+                print(f"   Stress: {converted_data.get('stress_level', 0.0)}")
+                print(f"   Emotional: {converted_data.get('emotional_valence', 'neutral')}")
+                print(f"   Candidate: {converted_data.get('candidate_id', 'Unknown')}")
+                
+                # Verify state update
+                session = self.session_service.get_session(
+                    app_name=self.app_name,
+                    user_id=self.user_id,
+                    session_id=self.session_id
+                )
+                if session and "behavioral_data" in session.state:
+                    print(f"   📊 Total behavioral data points: {len(session.state['behavioral_data'])}")
+            else:
+                print(f"❌ Failed to process JSON #{self.processed_count + 1}")
+                
+        except json.JSONDecodeError as e:
+            print(f"❌ Invalid JSON received: {e}")
+        except Exception as e:
+            print(f"❌ Error processing JSON: {e}")
+            import traceback
+            print(f"🔍 Full error: {traceback.format_exc()}")
+            
+    def _convert_json_format(self, producer_json: dict) -> dict:
+        """Convert producer JSON format to system expected format"""
+        
+        # Extract data from producer format
+        metadata = producer_json.get('metadata', {})
+        video_features = producer_json.get('video_features', {})
+        audio_features = producer_json.get('audio_features', {})
+        behavior_profile = producer_json.get('behavior_profile', {})
+        
+        # Convert to system format - this should match what ingest_from_model_output expects
+        timestamp = metadata.get('timestamp', datetime.now().isoformat())
+        
+        # Create the structure that ingest_from_model_output expects
+        converted_data = {
+            "metadata": metadata,  # Direct access for candidate_id, session_id
+            "video_features": video_features,
+            "audio_features": audio_features,
+            "behavior_profile": behavior_profile,
+            "timestamp": timestamp,
+            "candidate_id": metadata.get('candidate_id', 'CAND123'),
+            "session_id": metadata.get('session_id', 'INT2025-09-01-001'),
+            "confidence_level": behavior_profile.get('confidence_level', 0.0),
+            "engagement_level": behavior_profile.get('engagement_level', 0.0),
+            "stress_level": behavior_profile.get('stress_level', 0.0),
+            "emotional_valence": behavior_profile.get('emotional_valence', 'neutral'),
+            "facial_expressions": video_features.get('facial_expressions', []),
+            "gaze_tracking": video_features.get('gaze_tracking', []),
+            "head_movements": video_features.get('head_movements', []),
+            "body_language": video_features.get('body_language', {}),
+            "speech_segments": audio_features.get('speech_segments', []),
+            "prosody": audio_features.get('prosody', {}),
+            "pauses": audio_features.get('pauses', []),
+            "voice_tone": audio_features.get('voice_tone', 'neutral')
+        }
+        
+        return converted_data
+
+# Global JSON receiver instance
+json_receiver = None
+
+def start_json_receiver(session_service, app_name: str, user_id: str, session_id: str):
+    """Start the JSON receiver"""
+    global json_receiver
+    if json_receiver is None:
+        json_receiver = JSONReceiver(session_service, app_name, user_id, session_id)
+    json_receiver.start_receiving()
+
+def stop_json_receiver():
+    """Stop the JSON receiver"""
+    global json_receiver
+    if json_receiver:
+        json_receiver.stop_receiving()
+
+# ===== MAIN APPLICATION =====
 
 async def main_async():
     # Setup constants
@@ -300,7 +310,7 @@ async def main_async():
     print("═" * 50)
     print("📊 Real-time behavioral analysis during interviews")
     print("💬 Ask about candidate behavior, emotions, and patterns")
-    print("📝 Commands: 'simulate json', 'analyze behavior', 'show insights'")
+    print("📝 Commands: 'start json producer', 'stop json producer', 'analyze behavior', 'show insights'")
     print("❌ Type 'exit' or 'quit' to end the session\n")
 
     while True:
@@ -314,29 +324,19 @@ async def main_async():
         add_user_query_to_history(session_service, APP_NAME, USER_ID, SESSION_ID, user_input)
 
         # Behavioral Analysis Commands
-        if "simulate json" in user_input.lower():
-            try:
-                with open(SAMPLE_JSON_FILE, 'r') as f:
-                    json_data = json.load(f)
-                ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, json_data)
-                print(f"📊 Behavioral data ingested: {ingested}")
-                await call_agent_async(runner, USER_ID, SESSION_ID, "analyze the candidate's current behavioral state and provide insights")
-            except Exception as e:
-                print(f"❌ Error loading behavioral data: {e}")
-
-        elif "simulate event" in user_input.lower():
-            try:
-                match = re.search(r"simulate\s+event\s+(\{.*\})", user_input, re.IGNORECASE | re.DOTALL)
-                if match:
-                    payload_str = match.group(1)
-                    payload = json.loads(payload_str)
-                    ingested = ingest_from_model_output(session_service, APP_NAME, USER_ID, SESSION_ID, payload)
-                    print(f"📊 Behavioral event ingested: {ingested}")
-                    await call_agent_async(runner, USER_ID, SESSION_ID, "analyze this behavioral data and identify key patterns")
-                else:
-                    print("❌ No behavioral data found after 'simulate event'.")
-            except Exception as e:
-                print(f"❌ Error parsing behavioral data: {e}")
+        if "start json producer" in user_input.lower():
+            print("🚀 Starting real-time JSON producer...")
+            print("📡 Producer will generate unique JSON data continuously")
+            print("💡 Run 'python json_producer.py' in another terminal to start the producer")
+            print("🔄 Your system will automatically process incoming JSON data")
+            print("⏹️  Use 'stop json producer' to stop receiving data")
+            
+            # Start the JSON receiver
+            start_json_receiver(session_service, APP_NAME, USER_ID, SESSION_ID)
+            
+        elif "stop json producer" in user_input.lower():
+            print("⏹️ Stopping JSON producer...")
+            stop_json_receiver()
 
         elif "analyze behavior" in user_input.lower():
             await call_agent_async(runner, USER_ID, SESSION_ID, "provide a comprehensive behavioral analysis of the candidate including emotional patterns, confidence levels, and stress indicators")
@@ -408,38 +408,13 @@ async def main_async():
         session_id=SESSION_ID
     )
     
-    print("\n📊 **Final Behavioral Analysis Summary**")
-    print("═" * 50)
-
-    behavioral_data_count = len(final_session.state.get("behavioral_data", []))
-    current_behavior = final_session.state.get("current_behavior", {})
-
-    print(f"📝 Total behavioral data points processed: {behavioral_data_count}")
-
-    if current_behavior.get("metadata"):
-        candidate_id = current_behavior["metadata"].get("candidate_id", "Unknown")
-        session_id = current_behavior["metadata"].get("session_id", "Unknown")
-        print(f"👤 Candidate: {candidate_id}")
-        print(f"📋 Session: {session_id}")
-
-    behavior_profile = current_behavior.get("behavior_profile", {})
-    if behavior_profile:
-        confidence = behavior_profile.get("confidence_level", 0)
-        engagement = behavior_profile.get("engagement_level", 0)
-        stress = behavior_profile.get("stress_level", 0)
-        valence = behavior_profile.get("emotional_valence", "unknown")
-
-        print("📈 Final Behavioral Metrics:")
-        print(f"   🎯 Confidence Level: {confidence:.2f}")
-        print(f"   🔥 Engagement Level: {engagement:.2f}")
-        print(f"   😰 Stress Level: {stress:.2f}")
-        print(f"   💭 Emotional State: {valence.title()}")
-
-    print("✅ Behavioral analysis complete! Data saved to MongoDB Atlas.")
-    print("💡 Use 'show dashboard' to view detailed analysis anytime.")
+    if final_session:
+        print(f"\n📊 Final Session State:")
+        print(f"   Behavioral Data Points: {len(final_session.state.get('behavioral_data', []))}")
+        print(f"   User Queries: {len(final_session.state.get('user_queries', []))}")
+        print(f"   Last Update: {final_session.state.get('last_update', 'Never')}")
     
-    # Close the session service
-    session_service.close()
+    print("\n✅ Session completed and saved to MongoDB")
 
 def main():
     asyncio.run(main_async())
