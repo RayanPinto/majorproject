@@ -2,6 +2,7 @@
 """
 Utility functions for the Stateful Agent System
 Enhanced with beautiful colored UI and table displays
+Now includes optional speech output functionality
 """
 
 import json
@@ -10,6 +11,32 @@ from datetime import datetime
 from typing import Dict, Any, Optional, List
 import time
 import shutil
+
+# Import speech functionality (optional - graceful degradation if not available)
+try:
+    from speech_utils import speak_text, is_speech_enabled, get_speech_status
+    SPEECH_AVAILABLE = True
+    print("✅ Speech functionality loaded successfully")
+except ImportError as e:
+    SPEECH_AVAILABLE = False
+    print(f"❌ Speech import failed: {e}")
+    # Fallback functions if speech not available
+    def speak_text(text: str, async_speech: bool = True) -> None:
+        pass  # No-op if speech not available
+    def is_speech_enabled() -> bool:
+        return False
+    def get_speech_status() -> str:
+        return "Speech not available"
+except Exception as e:
+    SPEECH_AVAILABLE = False
+    print(f"❌ Speech initialization error: {e}")
+    # Fallback functions if speech not available
+    def speak_text(text: str, async_speech: bool = True) -> None:
+        pass  # No-op if speech not available
+    def is_speech_enabled() -> bool:
+        return False
+    def get_speech_status() -> str:
+        return "Speech not available"
 
 # ANSI Color Codes for beautiful UI
 class Colors:
@@ -142,11 +169,20 @@ def display_state(session_service, app_name: str, user_id: str, session_id: str,
         print(f"{Colors.RED}Error displaying state: {e}{Colors.RESET}")
 
 def display_agent_response(response_text: str, agent_name: str = "Agent"):
-    """Display agent response in a beautiful format"""
+    """Display agent response in a beautiful format with optional speech output"""
     print(f"\n{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE} {agent_name} Response {Colors.RESET}")
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.WHITE}{response_text}{Colors.RESET}")
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
+    
+    # Add speech output if available and enabled
+    if SPEECH_AVAILABLE and is_speech_enabled():
+        print(f"{Colors.GRAY}🔊 Speaking response...{Colors.RESET}")
+        speak_text(response_text, async_speech=True)
+    elif SPEECH_AVAILABLE:
+        print(f"{Colors.GRAY}🔇 Speech disabled{Colors.RESET}")
+    else:
+        print(f"{Colors.GRAY}❌ Speech not available{Colors.RESET}")
 
 def display_error(error_message: str, error_type: str = "Error"):
     """Display error messages in a beautiful format"""
@@ -156,23 +192,38 @@ def display_error(error_message: str, error_type: str = "Error"):
     print(f"{Colors.RED}{'=' * 60}{Colors.RESET}")
 
 def display_success(message: str, title: str = "Success"):
-    """Display success messages in a beautiful format"""
+    """Display success messages in a beautiful format with optional speech output"""
     print(f"\n{Colors.BOLD}{Colors.BG_GREEN}{Colors.WHITE} {title} {Colors.RESET}")
     print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.WHITE}{message}{Colors.RESET}")
     print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
+    
+    # Add speech output for important success messages
+    if SPEECH_AVAILABLE and is_speech_enabled():
+        speak_text(f"{title}: {message}", async_speech=True)
 
 def display_welcome():
-    """Display welcome message with beautiful formatting"""
-    print(f"\n{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE} Stateful JSON Assistant {Colors.RESET}")
+    """Display welcome message with beautiful formatting and speech status"""
+    print(f"\n{Colors.BOLD}{Colors.BG_BLUE}{Colors.WHITE} Behavioral Analysis Assistant {Colors.RESET}")
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.WHITE}Welcome! You can:{Colors.RESET}")
-    print(f"{Colors.YELLOW}• Process JSON data{Colors.RESET}")
-    print(f"{Colors.YELLOW}• Update state information{Colors.RESET}")
-    print(f"{Colors.YELLOW}• Request summaries{Colors.RESET}")
-    print(f"{Colors.YELLOW}• View current state{Colors.RESET}")
+    print(f"{Colors.YELLOW}• Process behavioral data{Colors.RESET}")
+    print(f"{Colors.YELLOW}• Analyze confidence, stress, and engagement{Colors.RESET}")
+    print(f"{Colors.YELLOW}• Request behavioral insights{Colors.RESET}")
+    print(f"{Colors.YELLOW}• View real-time dashboards{Colors.RESET}")
+    
+    # Show speech status
+    if SPEECH_AVAILABLE:
+        speech_status = get_speech_status()
+        print(f"{Colors.GRAY}Speech: {speech_status}{Colors.RESET}")
+        print(f"{Colors.GRAY}Commands: 'toggle speech', 'speech status'{Colors.RESET}")
+    
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.GRAY}Type 'exit' or 'quit' to end the conversation{Colors.RESET}\n")
+    
+    # Welcome speech
+    if SPEECH_AVAILABLE and is_speech_enabled():
+        speak_text("Welcome to the Behavioral Analysis Assistant. Speech output is now enabled.", async_speech=True)
 
 def display_query_info(query: str):
     """Display query information in a beautiful format"""

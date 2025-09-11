@@ -306,12 +306,8 @@ async def main_async():
     print(f"Session ready: {SESSION_ID}")
 
     # ===== PART 5: Interactive Loop =====
-    print("\n🤖 Behavioral Analysis Assistant")
-    print("═" * 50)
-    print("📊 Real-time behavioral analysis during interviews")
-    print("💬 Ask about candidate behavior, emotions, and patterns")
-    print("📝 Commands: 'start json producer', 'stop json producer', 'analyze behavior', 'show insights'")
-    print("❌ Type 'exit' or 'quit' to end the session\n")
+    from utils import display_welcome
+    display_welcome()
 
     while True:
         user_input = input("You: ")
@@ -378,6 +374,25 @@ async def main_async():
                 print("🔍 **End Debug**")
             else:
                 print("❌ No session found for debugging")
+        
+        elif "toggle speech" in user_input.lower():
+            # Toggle speech functionality
+            try:
+                from speech_utils import toggle_speech, get_speech_status
+                new_state = toggle_speech()
+                status = get_speech_status()
+                print(f"🔊 Speech toggled: {status}")
+            except ImportError:
+                print("❌ Speech functionality not available. Install pyttsx3 to enable speech.")
+        
+        elif "speech status" in user_input.lower():
+            # Show speech status
+            try:
+                from speech_utils import get_speech_status
+                status = get_speech_status()
+                print(f"🔊 Speech Status: {status}")
+            except ImportError:
+                print("❌ Speech functionality not available. Install pyttsx3 to enable speech.")
         
         elif "force patterns" in user_input.lower():
             # Force pattern recognition generation
