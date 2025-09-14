@@ -63,6 +63,12 @@ class LiveSpeechEngine:
         self.channels = 1
         self.format = pyaudio.paInt16
         
+        # Audio constants (uppercase for compatibility)
+        self.FORMAT = pyaudio.paInt16
+        self.CHANNELS = 1
+        self.RATE = 16000
+        self.CHUNK_SIZE = 1024
+        
         # Voice Activity Detection with 2-second silence timeout
         self.vad_threshold = 300  # Lowered threshold for better detection
         self.silence_frames = 0
@@ -74,6 +80,9 @@ class LiveSpeechEngine:
         self.audio = None
         self.input_stream = None
         self.output_stream = None
+        
+        # Audio queue for processing
+        self.audio_queue = queue.Queue()
         
         # Initialize components
         self._initialize_audio()
@@ -478,7 +487,7 @@ def get_live_speech_engine(on_speech_recognized: Optional[Callable[[str], None]]
     """Get the global Live Speech Engine instance (singleton pattern)"""
     global _live_speech_engine
     if _live_speech_engine is None:
-        _live_speech_engine = LiveSpeechEngine(on_speech_recognized)
+        _live_speech_engine = LiveSpeechEngine()
     return _live_speech_engine
 
 def enable_speech_mode() -> bool:
