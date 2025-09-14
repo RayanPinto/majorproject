@@ -27,21 +27,26 @@ from speech_conversation_handler import start_speech_conversation, stop_speech_c
 
 load_dotenv()
 
-# ===== PART 1: Initialize Persistent Session Service (MongoDB-backed) =====
-# We'll use an in-memory session service for the ADK runtime and persist state to MongoDB Atlas.
+# ===== PART 1: Initialize Session Service =====
+# Using InMemorySessionService for now to avoid MongoDB connection issues
+# MongoDB code preserved below for easy switching back later
 
-# MongoDB connection (prefer env var, fallback to provided URI)
-MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
-mongo_client = MongoClient(MONGODB_URI)
-mongo_db = mongo_client.get_database(os.getenv("MONGODB_DB", "adk_app"))
-sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions"))
+# MONGODB CODE (COMMENTED OUT - UNCOMMENT TO SWITCH BACK):
+# # MongoDB connection (prefer env var, fallback to provided URI)
+# MONGODB_URI = os.getenv("MONGODB_URI", "mongodb://localhost:27017")
+# mongo_client = MongoClient(MONGODB_URI)
+# mongo_db = mongo_client.get_database(os.getenv("MONGODB_DB", "adk_app"))
+# sessions_col = mongo_db.get_collection(os.getenv("MONGODB_COLLECTION", "sessions"))
+# 
+# # MongoDB session service used by the Runner
+# session_service = MongoDBSessionService(
+#     mongo_uri=MONGODB_URI,
+#     database_name=os.getenv("MONGODB_DB", "adk_app"),
+#     collection_name=os.getenv("MONGODB_COLLECTION", "sessions")
+# )
 
-# MongoDB session service used by the Runner
-session_service = MongoDBSessionService(
-    mongo_uri=MONGODB_URI,
-    database_name=os.getenv("MONGODB_DB", "adk_app"),
-    collection_name=os.getenv("MONGODB_COLLECTION", "sessions")
-)
+# InMemory session service (current active)
+session_service = InMemorySessionService()
 
 # ===== PART 2: Initial State Structure =====
 # Define the initial state structure for behavioral analysis
@@ -266,26 +271,34 @@ async def main_async():
     APP_NAME = "Behavioral Analysis System"
     USER_ID = "interviewer_user"
 
-    # ===== PART 3: Session Management - Load from Mongo or Create =====
-    # Try to load the most recent session for this app/user from MongoDB
-    existing_doc = sessions_col.find_one(
-        {"app_name": APP_NAME, "user_id": USER_ID},
-        sort=[("updated_at", -1)],
-    )
+    # ===== PART 3: Session Management - InMemory Session =====
+    # Using InMemory sessions for now (MongoDB session loading code preserved below)
+    
+    # MONGODB SESSION LOADING CODE (COMMENTED OUT - UNCOMMENT TO SWITCH BACK):
+    # # Try to load the most recent session for this app/user from MongoDB
+    # existing_doc = sessions_col.find_one(
+    #     {"app_name": APP_NAME, "user_id": USER_ID},
+    #     sort=[("updated_at", -1)],
+    # )
+    # 
+    # if existing_doc and isinstance(existing_doc.get("state"), dict):
+    #     # Use state from Mongo and continue that session
+    #     state_to_use = existing_doc["state"]
+    #     SESSION_ID = existing_doc.get("session_id") or str(uuid4())
+    #     print(f"Continuing existing session (Mongo): {SESSION_ID}")
+    # else:
+    #     # No prior session found; start fresh
+    #     state_to_use = initial_state
+    #     SESSION_ID = str(uuid4())
+    #     print(f"Created new session (Mongo): {SESSION_ID}")
 
-    if existing_doc and isinstance(existing_doc.get("state"), dict):
-        # Use state from Mongo and continue that session
-        state_to_use = existing_doc["state"]
-        SESSION_ID = existing_doc.get("session_id") or str(uuid4())
-        print(f"Continuing existing session (Mongo): {SESSION_ID}")
-    else:
-        # No prior session found; start fresh
-        state_to_use = initial_state
-        SESSION_ID = str(uuid4())
-        print(f"Created new session (Mongo): {SESSION_ID}")
+    # InMemory session creation (current active)
+    state_to_use = initial_state
+    SESSION_ID = str(uuid4())
+    print(f"Created new session (InMemory): {SESSION_ID}")
 
-    # Create the session in MongoDB
-    session_service.create_session(
+    # Create the session in InMemory service
+    await session_service.create_session(
         app_name=APP_NAME,
         user_id=USER_ID,
         session_id=SESSION_ID,
@@ -293,7 +306,7 @@ async def main_async():
     )
 
     # Ensure real-time structures exist
-    ensure_session_structures(session_service, APP_NAME, USER_ID, SESSION_ID)
+    await ensure_session_structures(session_service, APP_NAME, USER_ID, SESSION_ID)
 
     # ===== PART 4: Agent Runner Setup =====
     # Direct routing to conversational agent for behavioral analysis
@@ -303,12 +316,12 @@ async def main_async():
         session_service=session_service,
     )
 
-    # Session is already persisted in MongoDB via the session service
+    # Session is ready in InMemory service
     print(f"Session ready: {SESSION_ID}")
 
     # ===== PART 5: Natural Speech Conversation =====
     from utils import display_welcome
-    from speech_conversation_handler import get_speech_conversation_handler
+    from speech_conversation_handler import get_conversation_handler
     
     # Colors for output
     class Colors:
@@ -332,8 +345,8 @@ async def main_async():
     success = enable_speech_mode()
     if success:
         # Start speech conversation automatically
-        handler = get_speech_conversation_handler()
-        await handler.start_speech_conversation(runner, USER_ID, SESSION_ID)
+        handler = get_conversation_handler(runner, USER_ID, SESSION_ID)
+        await handler.start_speech_conversation()
         
         # Keep the conversation running
         try:
@@ -393,7 +406,7 @@ async def main_async():
         print(f"   User Queries: {len(final_session.state.get('user_queries', []))}")
         print(f"   Last Update: {final_session.state.get('last_update', 'Never')}")
     
-    print("\n✅ Session completed and saved to MongoDB")
+    print("\n✅ Session completed (InMemory)")
 
 def main():
     asyncio.run(main_async())

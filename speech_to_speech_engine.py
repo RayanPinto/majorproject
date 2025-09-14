@@ -44,7 +44,7 @@ class LiveSpeechEngine:
     Integrates with existing behavioral analysis system
     """
     
-    def __init__(self):
+    def __init__(self, on_speech_recognized: Optional[Callable[[str], None]] = None):
         self.client = None
         self.session = None
         self.session_context = None
@@ -56,6 +56,7 @@ class LiveSpeechEngine:
         self.listening_task = None
         self.is_playing_audio = False
         self.is_agent_speaking = False  # Track when agent is speaking
+        self.on_speech_recognized = on_speech_recognized  # Callback for speech recognition
         
         # Audio configuration
         self.sample_rate = 16000  # 16kHz for input
@@ -189,11 +190,11 @@ class LiveSpeechEngine:
         try:
             # Open input stream
             self.input_stream = self.audio.open(
-                format=self.FORMAT,
-                channels=self.CHANNELS,
-                rate=self.RATE,
+                format=self.format,
+                channels=self.channels,
+                rate=self.sample_rate,
                 input=True,
-                frames_per_buffer=self.CHUNK_SIZE,
+                frames_per_buffer=self.chunk_size,
                 stream_callback=self._audio_callback
             )
             
@@ -401,10 +402,10 @@ class LiveSpeechEngine:
                 
                 # Play audio
                 self.is_playing_audio = True
-                data = wf.readframes(self.CHUNK_SIZE)
+                data = wf.readframes(self.chunk_size)
                 while data and self.is_playing_audio:
                     output_stream.write(data)
-                    data = wf.readframes(self.CHUNK_SIZE)
+                    data = wf.readframes(self.chunk_size)
                 
                 output_stream.stop_stream()
                 output_stream.close()
