@@ -56,6 +56,7 @@ class LiveSpeechEngine:
         self.listening_task = None
         self.is_playing_audio = False
         self.is_agent_speaking = False  # Track when agent is speaking
+        self.on_speech_recognized = None  # Callback for speech recognition
         
         # Audio configuration
         self.sample_rate = 16000  # 16kHz for input
@@ -83,6 +84,9 @@ class LiveSpeechEngine:
         
         # Audio queue for processing
         self.audio_queue = queue.Queue()
+        
+        # Event loop reference for thread-safe async operations
+        self.loop = None
         
         # Initialize components
         self._initialize_audio()
@@ -158,11 +162,13 @@ class LiveSpeechEngine:
         if not self.client:
             raise RuntimeError("GenAI client not initialized")
         
+        # Store the event loop reference for thread-safe operations
+        self.loop = asyncio.get_running_loop()
+        
         # Use types.LiveConnectConfig for proper configuration
         config = types.LiveConnectConfig(
             response_modalities=["AUDIO"],
-            input_audio_transcription=types.AudioTranscriptionConfig(),  # Enable speech recognition
-            output_audio_transcription=types.AudioTranscriptionConfig(),  # Enable response transcription
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             system_instruction=system_instruction or "You are a helpful behavioral analysis assistant. Respond naturally and conversationally.",
             speech_config=types.SpeechConfig(
                 voice_config=types.VoiceConfig(
@@ -174,8 +180,9 @@ class LiveSpeechEngine:
         )
         
         try:
-            # Try gemini-live-2.5-flash-preview first (more stable for Live API)
+            # Try gemini-live-2.5-flash-preview for Live API (more stable)
             model = "gemini-live-2.5-flash-preview"
+            print(f"{Colors.CYAN}🔗 Connecting to {model} with Live API{Colors.RESET}")
             # Store the async context manager for later use
             self.session_context = self.client.aio.live.connect(model=model, config=config)
             self.session = await self.session_context.__aenter__()
@@ -229,15 +236,26 @@ class LiveSpeechEngine:
         print(f"{Colors.GRAY}🔇 Stopped listening{Colors.RESET}")
     
     def _audio_callback(self, in_data, frame_count, time_info, status):
-        """Enhanced callback with voice activity detection and silence timeout"""
-        if self.is_listening and self.session and not self.is_agent_speaking:
-            # Convert audio data to numpy array for processing
-            audio_data = np.frombuffer(in_data, dtype=np.int16)
+        """Audio callback for processing microphone input with VAD"""
+        if self.is_agent_speaking:
+            # Don't process input while agent is speaking
+            return (None, pyaudio.paContinue)
+        
+        try:
+            # Convert audio data to numpy array for energy calculation
+            audio_np = np.frombuffer(in_data, dtype=np.int16)
+            energy = np.sum(audio_np.astype(np.float64) ** 2) / len(audio_np)
             
-            # Calculate energy for voice activity detection
-            energy = np.sum(audio_data.astype(np.float32) ** 2) / len(audio_data)
+            # Debug: Show energy levels periodically
+            if hasattr(self, '_debug_counter'):
+                self._debug_counter += 1
+            else:
+                self._debug_counter = 0
             
-            # Voice activity detection with 2-second silence timeout
+            if self._debug_counter % 50 == 0:  # Every ~1 second
+                print(f"{Colors.GRAY}🔊 Audio energy: {energy:.0f} (threshold: {self.vad_threshold}){Colors.RESET}")
+            
+            # Voice Activity Detection
             if energy > self.vad_threshold:
                 # Speech detected
                 if not self.speech_detected:
@@ -258,19 +276,33 @@ class LiveSpeechEngine:
                         print(f"{Colors.GRAY}🔇 Speech ended (2s silence){Colors.RESET}")
                         self.speech_detected = False
                         self.silence_frames = 0
-                        # Send end-of-speech marker
-                        asyncio.create_task(self._send_end_of_speech())
+                        # Send end-of-speech marker using thread-safe method
+                        self._schedule_end_of_speech()
+        
+        except Exception as e:
+            print(f"{Colors.RED}❌ Audio callback error: {e}{Colors.RESET}")
         
         return (None, pyaudio.paContinue)
+    
+    def _schedule_end_of_speech(self):
+        """Schedule end-of-speech signal in a thread-safe way"""
+        if self.loop and not self.loop.is_closed():
+            try:
+                print(f"{Colors.CYAN}📤 Scheduling end-of-speech signal{Colors.RESET}")
+                self.loop.call_soon_threadsafe(lambda: asyncio.create_task(self._send_end_of_speech()))
+            except Exception as e:
+                print(f"{Colors.RED}❌ Error scheduling end-of-speech: {e}{Colors.RESET}")
     
     async def _send_end_of_speech(self):
         """Send end-of-speech signal to Live API"""
         if self.session:
             try:
+                print(f"{Colors.CYAN}📤 Sending end-of-speech signal to Live API{Colors.RESET}")
                 # Send empty audio data to signal end of speech
                 await self.session.send_realtime_input(
                     audio=types.Blob(data=b'', mime_type="audio/pcm;rate=16000")
                 )
+                print(f"{Colors.GREEN}✅ End-of-speech signal sent{Colors.RESET}")
             except Exception as e:
                 print(f"{Colors.RED}❌ Error sending end-of-speech: {e}{Colors.RESET}")
     
@@ -292,7 +324,7 @@ class LiveSpeechEngine:
                             mime_type="audio/pcm;rate=16000"
                         )
                     )
-                    print(f"{Colors.GREEN}📤 Audio sent to Live API{Colors.RESET}")
+                    print(f"{Colors.GREEN}📤 Audio sent to Live API ({len(audio_data)} bytes){Colors.RESET}")
                     
                 except queue.Empty:
                     # No audio data available, continue
@@ -308,7 +340,16 @@ class LiveSpeechEngine:
             return
         
         try:
+            print(f"{Colors.CYAN}🔍 Starting response handler...{Colors.RESET}")
             async for response in self.session.receive():
+                print(f"{Colors.GRAY}📥 Received response from Live API{Colors.RESET}")
+                
+                # Debug: Print response structure
+                if hasattr(response, 'server_content'):
+                    print(f"{Colors.GRAY}🔧 Response has server_content{Colors.RESET}")
+                else:
+                    print(f"{Colors.GRAY}🔧 Response structure: {type(response)}{Colors.RESET}")
+                
                 # Handle interruption
                 if hasattr(response, 'server_content') and response.server_content and hasattr(response.server_content, 'interrupted') and response.server_content.interrupted:
                     print(f"{Colors.YELLOW}⚠️ Speech interrupted{Colors.RESET}")
@@ -488,6 +529,8 @@ def get_live_speech_engine(on_speech_recognized: Optional[Callable[[str], None]]
     global _live_speech_engine
     if _live_speech_engine is None:
         _live_speech_engine = LiveSpeechEngine()
+    if on_speech_recognized:
+        _live_speech_engine.on_speech_recognized = on_speech_recognized
     return _live_speech_engine
 
 def enable_speech_mode() -> bool:

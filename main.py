@@ -23,6 +23,7 @@ from mongodb_session_service import MongoDBSessionService
 from utils import add_user_query_to_history, call_agent_async, display_behavioral_analysis, display_emotional_timeline
 from manager.tools.tools import ingest_from_model_output, ensure_session_structures
 from speech_to_speech_engine import get_live_speech_engine, enable_speech_mode, disable_speech_mode, is_speech_mode_enabled, get_speech_status
+from simple_speech_engine import get_simple_speech_engine, enable_simple_speech_mode, disable_simple_speech_mode, is_simple_speech_mode_enabled
 from speech_conversation_handler import start_speech_conversation, stop_speech_conversation, is_speech_conversation_active
 
 load_dotenv()
@@ -328,22 +329,32 @@ async def main_async():
     print(f"{Colors.YELLOW}⚡ You can interrupt me anytime by speaking{Colors.RESET}")
     print(f"{Colors.GRAY}🛑 Say 'goodbye' or 'exit' to end{Colors.RESET}")
     
-    # Enable speech mode automatically
-    success = enable_speech_mode()
+    # Try simple speech mode first (more reliable)
+    print(f"{Colors.CYAN}🔄 Trying simple speech mode...{Colors.RESET}")
+    success = enable_simple_speech_mode()
+    
     if success:
-        # Start speech conversation automatically
-        handler = get_conversation_handler(runner, USER_ID, SESSION_ID)
-        await handler.start_speech_conversation()
+        # Use simple speech engine
+        def on_speech_recognized(recognized_text: str):
+            asyncio.create_task(call_agent_async(runner, USER_ID, SESSION_ID, recognized_text))
+        
+        engine = get_simple_speech_engine(on_speech_recognized)
+        await engine.start_conversation_session("You are a behavioral analysis assistant for interview scenarios. Respond naturally and conversationally.")
+        engine.start_listening()
+        
+        print(f"{Colors.GREEN}✅ Simple speech conversation started!{Colors.RESET}")
+        print(f"{Colors.CYAN}💬 Speak naturally - I'll respond with text{Colors.RESET}")
+        print(f"{Colors.GRAY}🛑 Say 'stop conversation' or press Ctrl+C to end{Colors.RESET}")
         
         # Keep the conversation running
         try:
-            while handler.is_conversation_active:
+            while engine.is_listening:
                 await asyncio.sleep(0.1)
         except KeyboardInterrupt:
             print(f"\n{Colors.YELLOW}🛑 Conversation interrupted{Colors.RESET}")
-            await handler.stop_speech_conversation()
+            engine.stop_listening()
     else:
-        print(f"{Colors.RED}❌ Failed to start speech mode, falling back to text{Colors.RESET}")
+        print(f"{Colors.RED}❌ Failed to start simple speech mode, falling back to text{Colors.RESET}")
         
         # Fallback to text mode
         while True:
