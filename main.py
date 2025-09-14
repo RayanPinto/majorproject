@@ -136,7 +136,6 @@ class JSONReceiver:
                                 self._process_json(json_str)
                             else:
                                 print("📭 Empty JSON string received")
-                                
                         except socket.timeout:
                             continue
                         except Exception as e:
@@ -307,159 +306,79 @@ async def main_async():
     # Session is already persisted in MongoDB via the session service
     print(f"Session ready: {SESSION_ID}")
 
-    # ===== PART 5: Interactive Loop =====
+    # ===== PART 5: Natural Speech Conversation =====
     from utils import display_welcome
+    from speech_conversation_handler import get_speech_conversation_handler
+    
+    # Colors for output
+    class Colors:
+        CYAN = '\033[96m'
+        GREEN = '\033[92m'
+        YELLOW = '\033[93m'
+        RED = '\033[91m'
+        BLUE = '\033[94m'
+        GRAY = '\033[90m'
+        RESET = '\033[0m'
+    
     display_welcome()
-
-    while True:
-        user_input = input("You: ")
-
-        if user_input.lower() in ["exit", "quit"]:
-            print("Ending session. Goodbye!")
-            break
-
-        # Save to history
-        add_user_query_to_history(session_service, APP_NAME, USER_ID, SESSION_ID, user_input)
-
-        # Behavioral Analysis Commands
-        if "start json producer" in user_input.lower():
-            print("🚀 Starting real-time JSON producer...")
-            print("📡 Producer will generate unique JSON data continuously")
-            print("💡 Run 'python json_producer.py' in another terminal to start the producer")
-            print("🔄 Your system will automatically process incoming JSON data")
-            print("⏹️  Use 'stop json producer' to stop receiving data")
-            
-            # Start the JSON receiver
-            start_json_receiver(session_service, APP_NAME, USER_ID, SESSION_ID)
-            
-        elif "stop json producer" in user_input.lower():
-            print("⏹️ Stopping JSON producer...")
-            stop_json_receiver()
-
-        elif "analyze behavior" in user_input.lower():
-            await call_agent_async(runner, USER_ID, SESSION_ID, "provide a comprehensive behavioral analysis of the candidate including emotional patterns, confidence levels, and stress indicators")
-
-        elif "show insights" in user_input.lower():
-            await call_agent_async(runner, USER_ID, SESSION_ID, "show me the key behavioral insights and notable observations from the interview")
-
-        elif "emotional pattern" in user_input.lower():
-            await call_agent_async(runner, USER_ID, SESSION_ID, "analyze the candidate's emotional patterns throughout the interview and identify any significant changes")
-
-        elif "confidence level" in user_input.lower():
-            await call_agent_async(runner, USER_ID, SESSION_ID, "assess the candidate's confidence level and how it changed during different parts of the interview")
-
-        elif "show dashboard" in user_input.lower() or "behavioral dashboard" in user_input.lower():
-            display_behavioral_analysis(session_service, APP_NAME, USER_ID, SESSION_ID)
-
-        elif "emotional timeline" in user_input.lower() or "timeline" in user_input.lower():
-            display_emotional_timeline(session_service, APP_NAME, USER_ID, SESSION_ID)
-
-        elif "debug state" in user_input.lower():
-            # Debug command to see what's actually in the state
-            session = session_service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID)
-            if session:
-                print("🔍 **DEBUG: Current Session State**")
-                print(f"Keys in state: {list(session.state.keys())}")
-                if "current_behavior" in session.state:
-                    current_behavior = session.state["current_behavior"]
-                    print(f"Current behavior keys: {list(current_behavior.keys())}")
-                    if "behavior_profile" in current_behavior:
-                        profile = current_behavior["behavior_profile"]
-                        print(f"Behavior profile: {profile}")
-                if "behavioral_data" in session.state:
-                    print(f"Behavioral data count: {len(session.state['behavioral_data'])}")
-                if "behavioral_insights" in session.state:
-                    insights = session.state["behavioral_insights"]
-                    print(f"Behavioral insights keys: {list(insights.keys())}")
-                    if "pattern_summary" in insights:
-                        print(f"Pattern summary: {insights['pattern_summary']}")
-                print("🔍 **End Debug**")
-            else:
-                print("❌ No session found for debugging")
+    
+    # Auto-start natural speech conversation
+    print(f"{Colors.CYAN}🎤 Starting natural speech conversation...{Colors.RESET}")
+    print(f"{Colors.GREEN}💬 Speak naturally - I'll respond when you pause{Colors.RESET}")
+    print(f"{Colors.YELLOW}⚡ You can interrupt me anytime by speaking{Colors.RESET}")
+    print(f"{Colors.GRAY}🛑 Say 'goodbye' or 'exit' to end{Colors.RESET}")
+    
+    # Enable speech mode automatically
+    success = enable_speech_mode()
+    if success:
+        # Start speech conversation automatically
+        handler = get_speech_conversation_handler()
+        await handler.start_speech_conversation(runner, USER_ID, SESSION_ID)
         
-        elif "toggle speech" in user_input.lower():
-            # Toggle speech functionality
+        # Keep the conversation running
+        try:
+            while handler.is_conversation_active:
+                await asyncio.sleep(0.1)
+        except KeyboardInterrupt:
+            print(f"\n{Colors.YELLOW}🛑 Conversation interrupted{Colors.RESET}")
+            await handler.stop_speech_conversation()
+    else:
+        print(f"{Colors.RED}❌ Failed to start speech mode, falling back to text{Colors.RESET}")
+        
+        # Fallback to text mode
+        while True:
             try:
-                from utils import toggle_speech, get_speech_status
-                new_state = toggle_speech()
-                status = get_speech_status()
-                print(f"🔊 Speech toggled: {status}")
-            except ImportError:
-                print("❌ Speech functionality not available.")
-                print("💡 Install dependencies: pip install pygame")
-        
-        elif "speech status" in user_input.lower():
-            # Show speech status
-            try:
-                from utils import get_speech_status
-                status = get_speech_status()
-                print(f"🔊 Speech Status: {status}")
-            except ImportError:
-                print("❌ Speech functionality not available.")
-                print("💡 Install dependencies: pip install pygame")
-        
-        elif "test speech" in user_input.lower():
-            # Test speech functionality with ADK Runner
-            print("🎤 Testing speech with ADK Runner...")
-            print("💡 Speech will be tested with your next agent query")
-            print("✨ Try: 'analyze behavior' to test speech output")
-        
-        elif "force patterns" in user_input.lower():
-            # Force pattern recognition generation
-            session = session_service.get_session(app_name=APP_NAME, user_id=USER_ID, session_id=SESSION_ID)
-            if session:
-                from manager.tools.tools import _update_behavioral_insights
-                _update_behavioral_insights(session.state)
-                session_service.update_session(APP_NAME, USER_ID, SESSION_ID, session.state)
-                print("✅ **Pattern recognition forced and updated**")
-                print("🔍 **New behavioral insights generated**")
-                if "behavioral_insights" in session.state:
-                    insights = session.state["behavioral_insights"]
-                    if "pattern_summary" in insights:
-                        print(f"📊 **Pattern Summary**: {insights['pattern_summary']}")
-            else:
-                print("❌ No session found for pattern generation")
-        
-        elif "enable speech mode" in user_input.lower() or "start speech mode" in user_input.lower():
-            # Enable speech-to-speech mode
-            print("🚀 Enabling speech-to-speech mode...")
-            success = enable_speech_mode()
-            if success:
-                print("✅ Speech mode enabled! You can now:")
-                print("   🎤 Speak naturally to interact with the agent")
-                print("   🔊 Hear responses in real-time audio")
-                print("   ⚡ Interrupt the agent while it's speaking")
-                print("💡 Use 'start conversation' to begin speech interaction")
-            else:
-                print("❌ Failed to enable speech mode. Check dependencies.")
-        
-        elif "disable speech mode" in user_input.lower() or "stop speech mode" in user_input.lower():
-            # Disable speech-to-speech mode
-            disable_speech_mode()
-            print("🔇 Speech mode disabled - Back to text input")
-        
-        elif "speech mode status" in user_input.lower() or "speech status" in user_input.lower():
-            # Show speech mode status
-            status = get_speech_status()
-            print("🔊 **Speech Mode Status:**")
-            for key, value in status.items():
-                status_icon = "✅" if value else "❌"
-                print(f"   {status_icon} {key.replace('_', ' ').title()}: {value}")
-        
-        elif "start conversation" in user_input.lower() and is_speech_mode_enabled():
-            # Start speech conversation
-            await start_speech_conversation(runner, USER_ID, SESSION_ID)
-        
-        elif "stop conversation" in user_input.lower():
-            # Stop speech conversation
-            await stop_speech_conversation()
-        
-        else:
-            # Normal agent call
-            await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
-
-        # State is automatically persisted by the MongoDB session service
-        pass
+                user_input = input("You: ")
+                
+                if not user_input.strip():
+                    continue
+                
+                # Handle exit commands
+                if user_input.lower() in ['exit', 'quit', 'bye', 'goodbye']:
+                    print("👋 Goodbye!")
+                    break
+                
+                # Save to history
+                add_user_query_to_history(session_service, APP_NAME, USER_ID, SESSION_ID, user_input)
+                
+                # Handle special commands
+                if "start json producer" in user_input.lower():
+                    print("🚀 Starting real-time JSON producer...")
+                    start_json_receiver(session_service, APP_NAME, USER_ID, SESSION_ID)
+                elif "stop json producer" in user_input.lower():
+                    print("⏹️ Stopping JSON producer...")
+                    stop_json_receiver()
+                elif "show dashboard" in user_input.lower():
+                    display_behavioral_analysis(session_service, APP_NAME, USER_ID, SESSION_ID)
+                elif "emotional timeline" in user_input.lower():
+                    display_emotional_timeline(session_service, APP_NAME, USER_ID, SESSION_ID)
+                else:
+                    # Normal agent call
+                    await call_agent_async(runner, USER_ID, SESSION_ID, user_input)
+                    
+            except KeyboardInterrupt:
+                print("\n👋 Goodbye!")
+                break
 
     # ===== PART 6: Final State =====
     final_session = session_service.get_session(

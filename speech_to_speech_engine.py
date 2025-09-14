@@ -44,32 +44,33 @@ class LiveSpeechEngine:
     Integrates with existing behavioral analysis system
     """
     
-    def __init__(self, on_speech_recognized: Optional[Callable[[str], None]] = None):
-        self.is_speech_mode_enabled = False
-        self.is_listening = False
-        self.is_speaking = False
-        self.session = None
+    def __init__(self):
         self.client = None
-        self.audio_queue = queue.Queue()
-        self.response_queue = queue.Queue()
+        self.session = None
+        self.session_context = None
+        self.is_listening = False
+        self.is_speech_mode_enabled = False
+        self.audio_stream = None
+        self.pyaudio_instance = None
+        self.response_handler_task = None
+        self.listening_task = None
+        self.is_playing_audio = False
+        self.is_agent_speaking = False  # Track when agent is speaking
         
         # Audio configuration
-        self.CHUNK_SIZE = 1024
-        self.FORMAT = pyaudio.paInt16
-        self.CHANNELS = 1
-        self.RATE = 16000  # 16kHz for input
-        self.OUTPUT_RATE = 24000  # 24kHz for output
+        self.sample_rate = 16000  # 16kHz for input
+        self.chunk_size = 1024
+        self.channels = 1
+        self.format = pyaudio.paInt16
         
-        # Callbacks
-        self.on_speech_recognized = on_speech_recognized
+        # Voice Activity Detection with 2-second silence timeout
+        self.vad_threshold = 300  # Lowered threshold for better detection
+        self.silence_frames = 0
+        self.max_silence_frames = 32  # 2 seconds at 16kHz (2 * 16000 / 1024 ≈ 32 frames)
+        self.speech_detected = False
+        self.last_speech_time = None
         
-        # Threading
-        self.audio_thread = None
-        self.session_thread = None
-        self.playback_thread = None
-        self.speech_lock = threading.Lock()
-        
-        # PyAudio instance
+        # Initialize GenAI client
         self.audio = None
         self.input_stream = None
         self.output_stream = None
@@ -104,8 +105,8 @@ class LiveSpeechEngine:
             if not api_key:
                 raise ValueError("GOOGLE_API_KEY not found in environment")
             
-            genai.configure(api_key=api_key)
-            self.client = genai.Client()
+            # Use the new Google GenAI SDK client initialization
+            self.client = genai.Client(api_key=api_key)
             print(f"{Colors.GREEN}✅ Google GenAI client initialized{Colors.RESET}")
             
         except Exception as e:
@@ -148,23 +149,27 @@ class LiveSpeechEngine:
         if not self.client:
             raise RuntimeError("GenAI client not initialized")
         
-        # Configuration for bidirectional speech
-        config = {
-            "response_modalities": ["AUDIO", "TEXT"],
-            "system_instruction": system_instruction or "You are a helpful behavioral analysis assistant. Respond naturally and conversationally.",
-            "speech_config": {
-                "voice_config": {
-                    "prebuilt_voice_config": {
-                        "voice_name": "Puck"
-                    }
-                }
-            }
-        }
+        # Use types.LiveConnectConfig for proper configuration
+        config = types.LiveConnectConfig(
+            response_modalities=["AUDIO"],
+            input_audio_transcription=types.AudioTranscriptionConfig(),  # Enable speech recognition
+            output_audio_transcription=types.AudioTranscriptionConfig(),  # Enable response transcription
+            system_instruction=system_instruction or "You are a helpful behavioral analysis assistant. Respond naturally and conversationally.",
+            speech_config=types.SpeechConfig(
+                voice_config=types.VoiceConfig(
+                    prebuilt_voice_config=types.PrebuiltVoiceConfig(
+                        voice_name="Puck"
+                    )
+                )
+            )
+        )
         
         try:
-            # Use the Live API model that supports bidirectional audio
-            model = "gemini-2.0-flash-live-001"
-            self.session = await self.client.aio.live.connect(model=model, config=config)
+            # Try gemini-live-2.5-flash-preview first (more stable for Live API)
+            model = "gemini-live-2.5-flash-preview"
+            # Store the async context manager for later use
+            self.session_context = self.client.aio.live.connect(model=model, config=config)
+            self.session = await self.session_context.__aenter__()
             print(f"{Colors.GREEN}🔗 Live conversation session started{Colors.RESET}")
             return True
             
@@ -215,19 +220,50 @@ class LiveSpeechEngine:
         print(f"{Colors.GRAY}🔇 Stopped listening{Colors.RESET}")
     
     def _audio_callback(self, in_data, frame_count, time_info, status):
-        """Callback for audio input stream"""
-        if self.is_listening and self.session:
+        """Enhanced callback with voice activity detection and silence timeout"""
+        if self.is_listening and self.session and not self.is_agent_speaking:
             # Convert audio data to numpy array for processing
             audio_data = np.frombuffer(in_data, dtype=np.int16)
             
-            # Simple voice activity detection (energy-based)
+            # Calculate energy for voice activity detection
             energy = np.sum(audio_data.astype(np.float32) ** 2) / len(audio_data)
             
-            # If there's significant energy, queue the audio
-            if energy > 1000:  # Threshold for voice activity
+            # Voice activity detection with 2-second silence timeout
+            if energy > self.vad_threshold:
+                # Speech detected
+                if not self.speech_detected:
+                    self.speech_detected = True
+                    print(f"{Colors.CYAN}🎤 Speech started (energy: {energy:.0f}){Colors.RESET}")
+                
+                self.silence_frames = 0
+                self.last_speech_time = time.time()
                 self.audio_queue.put(in_data)
+                
+            else:
+                # Silence detected
+                if self.speech_detected:
+                    self.silence_frames += 1
+                    
+                    # Check if silence timeout reached (2 seconds)
+                    if self.silence_frames >= self.max_silence_frames:
+                        print(f"{Colors.GRAY}🔇 Speech ended (2s silence){Colors.RESET}")
+                        self.speech_detected = False
+                        self.silence_frames = 0
+                        # Send end-of-speech marker
+                        asyncio.create_task(self._send_end_of_speech())
         
         return (None, pyaudio.paContinue)
+    
+    async def _send_end_of_speech(self):
+        """Send end-of-speech signal to Live API"""
+        if self.session:
+            try:
+                # Send empty audio data to signal end of speech
+                await self.session.send_realtime_input(
+                    audio=types.Blob(data=b'', mime_type="audio/pcm;rate=16000")
+                )
+            except Exception as e:
+                print(f"{Colors.RED}❌ Error sending end-of-speech: {e}{Colors.RESET}")
     
     async def process_audio_stream(self):
         """Process queued audio data and send to Live API"""
@@ -247,6 +283,7 @@ class LiveSpeechEngine:
                             mime_type="audio/pcm;rate=16000"
                         )
                     )
+                    print(f"{Colors.GREEN}📤 Audio sent to Live API{Colors.RESET}")
                     
                 except queue.Empty:
                     # No audio data available, continue
@@ -257,31 +294,74 @@ class LiveSpeechEngine:
             print(f"{Colors.RED}❌ Audio processing error: {e}{Colors.RESET}")
     
     async def handle_responses(self):
-        """Handle responses from Live API"""
+        """Handle responses from Live API with new format (AUDIO + transcription)"""
         if not self.session:
             return
         
         try:
             async for response in self.session.receive():
                 # Handle interruption
-                if hasattr(response, 'server_content') and response.server_content and response.server_content.interrupted:
+                if hasattr(response, 'server_content') and response.server_content and hasattr(response.server_content, 'interrupted') and response.server_content.interrupted:
                     print(f"{Colors.YELLOW}⚠️ Speech interrupted{Colors.RESET}")
                     self.stop_current_playback()
                 
-                # Handle text response
-                if response.text:
-                    print(f"{Colors.BLUE}🤖 Agent: {response.text}{Colors.RESET}")
-                    
-                    # Call the speech recognition callback if provided
-                    if self.on_speech_recognized:
-                        self.on_speech_recognized(response.text)
+                # Handle input transcription (speech recognition from user)
+                if hasattr(response, 'server_content') and response.server_content and hasattr(response.server_content, 'input_transcription') and response.server_content.input_transcription:
+                    text = response.server_content.input_transcription.text
+                    if text:
+                        # Add automatic punctuation to transcribed speech
+                        punctuated_text = self._add_punctuation(text)
+                        print(f"{Colors.BLUE}👤 You said: {punctuated_text}{Colors.RESET}")
+                        
+                        # Call the speech recognition callback if provided
+                        if self.on_speech_recognized:
+                            self.on_speech_recognized(punctuated_text)
+
+                # Handle audio transcription (text from audio output)
+                if hasattr(response, 'server_content') and response.server_content and hasattr(response.server_content, 'output_transcription') and response.server_content.output_transcription:
+                    text = response.server_content.output_transcription.text
+                    if text:
+                        print(f"{Colors.BLUE}🤖 Agent: {text}{Colors.RESET}")
                 
-                # Handle audio response
-                if response.data:
+                # Handle audio data from model turn
+                if hasattr(response, 'server_content') and response.server_content and hasattr(response.server_content, 'model_turn') and response.server_content.model_turn:
+                    # Mark agent as speaking to prevent input capture
+                    self.is_agent_speaking = True
+                    for part in response.server_content.model_turn.parts:
+                        if hasattr(part, 'inline_data') and part.inline_data and part.inline_data.data:
+                            self._play_audio_response(part.inline_data.data)
+                
+                # Fallback: Handle direct audio data (if available)
+                if hasattr(response, 'data') and response.data:
                     self._play_audio_response(response.data)
                     
         except Exception as e:
             print(f"{Colors.RED}❌ Response handling error: {e}{Colors.RESET}")
+    
+    def _add_punctuation(self, text: str) -> str:
+        """Add automatic punctuation to transcribed speech"""
+        if not text:
+            return text
+        
+        # Basic punctuation rules
+        text = text.strip()
+        
+        # Add period if no ending punctuation
+        if not text.endswith(('.', '!', '?', ':')):
+            # Check for question words
+            question_words = ['what', 'when', 'where', 'why', 'how', 'who', 'which', 'can', 'could', 'would', 'should', 'is', 'are', 'do', 'does', 'did']
+            first_word = text.split()[0].lower() if text.split() else ''
+            
+            if first_word in question_words:
+                text += '?'
+            else:
+                text += '.'
+        
+        # Capitalize first letter
+        if text:
+            text = text[0].upper() + text[1:]
+        
+        return text
     
     def _play_audio_response(self, audio_data: bytes):
         """Play audio response from the agent"""
@@ -320,15 +400,17 @@ class LiveSpeechEngine:
                 )
                 
                 # Play audio
-                self.is_speaking = True
+                self.is_playing_audio = True
                 data = wf.readframes(self.CHUNK_SIZE)
-                while data and self.is_speaking:
+                while data and self.is_playing_audio:
                     output_stream.write(data)
                     data = wf.readframes(self.CHUNK_SIZE)
                 
                 output_stream.stop_stream()
                 output_stream.close()
-                self.is_speaking = False
+                self.is_playing_audio = False
+                # Reset agent speaking state when playback finishes
+                self.is_agent_speaking = False
                 
         except Exception as e:
             print(f"{Colors.RED}❌ WAV playback error: {e}{Colors.RESET}")
@@ -344,10 +426,10 @@ class LiveSpeechEngine:
             return False
         
         try:
-            turns = [{
+            turns = {
                 "role": "user",
                 "parts": [{"text": text}]
-            }]
+            }
             
             await self.session.send_client_content(turns=turns, turn_complete=True)
             return True
@@ -358,10 +440,11 @@ class LiveSpeechEngine:
     
     async def close_session(self):
         """Close the Live API session"""
-        if self.session:
+        if self.session_context:
             try:
-                await self.session.close()
+                await self.session_context.__aexit__(None, None, None)
                 self.session = None
+                self.session_context = None
                 print(f"{Colors.GRAY}🔌 Live session closed{Colors.RESET}")
             except Exception as e:
                 print(f"{Colors.RED}❌ Error closing session: {e}{Colors.RESET}")
