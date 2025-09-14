@@ -22,6 +22,8 @@ from mongodb_session_service import MongoDBSessionService
 
 from utils import add_user_query_to_history, call_agent_async, display_behavioral_analysis, display_emotional_timeline
 from manager.tools.tools import ingest_from_model_output, ensure_session_structures
+from speech_to_speech_engine import get_live_speech_engine, enable_speech_mode, disable_speech_mode, is_speech_mode_enabled, get_speech_status
+from speech_conversation_handler import start_speech_conversation, stop_speech_conversation, is_speech_conversation_active
 
 load_dotenv()
 
@@ -417,6 +419,41 @@ async def main_async():
                         print(f"📊 **Pattern Summary**: {insights['pattern_summary']}")
             else:
                 print("❌ No session found for pattern generation")
+        
+        elif "enable speech mode" in user_input.lower() or "start speech mode" in user_input.lower():
+            # Enable speech-to-speech mode
+            print("🚀 Enabling speech-to-speech mode...")
+            success = enable_speech_mode()
+            if success:
+                print("✅ Speech mode enabled! You can now:")
+                print("   🎤 Speak naturally to interact with the agent")
+                print("   🔊 Hear responses in real-time audio")
+                print("   ⚡ Interrupt the agent while it's speaking")
+                print("💡 Use 'start conversation' to begin speech interaction")
+            else:
+                print("❌ Failed to enable speech mode. Check dependencies.")
+        
+        elif "disable speech mode" in user_input.lower() or "stop speech mode" in user_input.lower():
+            # Disable speech-to-speech mode
+            disable_speech_mode()
+            print("🔇 Speech mode disabled - Back to text input")
+        
+        elif "speech mode status" in user_input.lower() or "speech status" in user_input.lower():
+            # Show speech mode status
+            status = get_speech_status()
+            print("🔊 **Speech Mode Status:**")
+            for key, value in status.items():
+                status_icon = "✅" if value else "❌"
+                print(f"   {status_icon} {key.replace('_', ' ').title()}: {value}")
+        
+        elif "start conversation" in user_input.lower() and is_speech_mode_enabled():
+            # Start speech conversation
+            await start_speech_conversation(runner, USER_ID, SESSION_ID)
+        
+        elif "stop conversation" in user_input.lower():
+            # Stop speech conversation
+            await stop_speech_conversation()
+        
         else:
             # Normal agent call
             await call_agent_async(runner, USER_ID, SESSION_ID, user_input)

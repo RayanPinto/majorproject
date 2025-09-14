@@ -3,3 +3,6 @@ pymongo
 python-dotenv 
 asyncio
 pygame
+pyaudio
+numpy
+google-generativeai
