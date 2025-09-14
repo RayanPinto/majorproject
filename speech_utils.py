@@ -1,13 +1,23 @@
 #!/usr/bin/env python3
 """
 Speech Utilities for Behavioral Analysis System
-Provides text-to-speech functionality without disrupting existing functionality
+Provides real audio speech functionality using Google ADK
 """
 
-import pyttsx3
 import threading
 import re
+import os
+import tempfile
+import pygame
+import io
+import asyncio
 from typing import Optional
+import google.generativeai as genai
+from google.genai import types
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
 
 # ANSI Color Codes for console output
 class Colors:
@@ -30,42 +40,39 @@ class Colors:
     BG_WHITE = '\033[47m'    # Background White
     RESET = '\033[0m'        # Reset to default
 
-class SpeechEngine:
-    """Thread-safe speech engine for converting text to speech"""
+class GoogleADKSpeechEngine:
+    """Real speech engine using Google ADK built-in speech synthesis"""
     
     def __init__(self):
-        self.engine = None
         self.is_enabled = True
         self.is_initialized = False
         self.speech_lock = threading.Lock()
+        self.model = None
         self._initialize_engine()
     
     def _initialize_engine(self):
-        """Initialize the pyttsx3 engine with error handling"""
+        """Initialize the Google ADK speech engine"""
         try:
-            self.engine = pyttsx3.init()
+            # Initialize pygame mixer for audio playback
+            pygame.mixer.init(frequency=24000, size=-16, channels=1, buffer=512)
             
-            # Configure speech properties for better experience
-            if self.engine:
-                # Set speech rate (words per minute) - moderate speed
-                self.engine.setProperty('rate', 150)
-                
-                # Set volume (0.0 to 1.0)
-                self.engine.setProperty('volume', 0.8)
-                
-                # Try to set a pleasant voice (prefer female voice if available)
-                voices = self.engine.getProperty('voices')
-                if voices and len(voices) > 1:
-                    # Use female voice (index 1) if available, otherwise use default
-                    self.engine.setProperty('voice', voices[1].id)
-                
-                self.is_initialized = True
-                print(f"{Colors.GREEN}✅ Speech engine initialized successfully{Colors.RESET}")
+            # Configure Gemini API for speech synthesis
+            api_key = os.getenv("GOOGLE_API_KEY")
+            if api_key:
+                genai.configure(api_key=api_key)
+                # Initialize model for speech synthesis
+                self.model = genai.GenerativeModel('gemini-2.0-flash-live-001')
+                print(f"{Colors.GREEN}✅ Google ADK speech engine initialized successfully{Colors.RESET}")
+                print(f"{Colors.CYAN}🔊 Using Google ADK built-in speech synthesis{Colors.RESET}")
             else:
-                print(f"{Colors.YELLOW}⚠️ Speech engine could not be initialized{Colors.RESET}")
+                print(f"{Colors.RED}❌ No Google API key found{Colors.RESET}")
+                self.is_enabled = False
+                return
+            
+            self.is_initialized = True
                 
         except Exception as e:
-            print(f"{Colors.YELLOW}⚠️ Speech engine initialization failed: {e}{Colors.RESET}")
+            print(f"{Colors.YELLOW}⚠️ Google ADK speech engine initialization failed: {e}{Colors.RESET}")
             print(f"{Colors.GRAY}Speech functionality will be disabled{Colors.RESET}")
             self.is_enabled = False
     
@@ -104,7 +111,7 @@ class SpeechEngine:
         return text
     
     def speak_async(self, text: str) -> None:
-        """Speak text asynchronously without blocking the main thread"""
+        """Speak text asynchronously with real audio output"""
         if not self.is_enabled or not self.is_initialized or not text:
             return
         
@@ -126,17 +133,108 @@ class SpeechEngine:
         speech_thread.start()
     
     def _speak_text(self, text: str) -> None:
-        """Internal method to speak text (runs in separate thread)"""
+        """Internal method to generate and play real speech audio"""
         try:
             with self.speech_lock:
-                if self.engine and self.is_enabled:
-                    self.engine.say(text)
-                    self.engine.runAndWait()
+                if not self.is_enabled:
+                    return
+                
+                print(f"{Colors.CYAN}🔊 Speaking: {text[:50]}...{Colors.RESET}")
+                
+                # Generate speech audio
+                audio_data = self._generate_speech_audio(text)
+                if audio_data:
+                    self._play_audio(audio_data)
+                else:
+                    print(f"{Colors.YELLOW}⚠️ Failed to generate speech audio{Colors.RESET}")
+                    
         except Exception as e:
             print(f"{Colors.YELLOW}⚠️ Speech synthesis error: {e}{Colors.RESET}")
     
+    def _generate_speech_audio(self, text: str) -> Optional[bytes]:
+        """Generate speech audio using Google ADK speech synthesis"""
+        try:
+            if not self.model:
+                return None
+            
+            # Use dictionary format instead of types objects (this is what the API expects)
+            generation_config = {
+                "response_modalities": ["AUDIO"],
+                "speech_config": {
+                    "voice_config": {
+                        "prebuilt_voice_config": {
+                            "voice_name": "Puck"
+                        }
+                    }
+                }
+            }
+            
+            # Generate speech
+            response = self.model.generate_content(
+                text,
+                generation_config=generation_config
+            )
+            
+            # Extract audio data from response
+            if response.candidates and response.candidates[0].content.parts:
+                for part in response.candidates[0].content.parts:
+                    if (hasattr(part, 'inline_data') and 
+                        part.inline_data and 
+                        part.inline_data.mime_type and 
+                        part.inline_data.mime_type.startswith("audio/")):
+                        return part.inline_data.data
+            
+            return None
+                
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠️ Google ADK speech generation error: {e}{Colors.RESET}")
+            return None
+    
+    def _play_audio(self, audio_data: bytes) -> None:
+        """Play audio data using pygame (Google ADK returns PCM audio)"""
+        try:
+            # Create a temporary file for the audio (Google ADK typically returns PCM)
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as temp_file:
+                # Write raw PCM data as WAV file
+                import wave
+                with wave.open(temp_file.name, 'wb') as wav_file:
+                    wav_file.setnchannels(1)  # Mono
+                    wav_file.setsampwidth(2)  # 16-bit
+                    wav_file.setframerate(24000)  # 24kHz sample rate
+                    wav_file.writeframes(audio_data)
+                
+                temp_file_path = temp_file.name
+            
+            # Load and play the audio
+            pygame.mixer.music.load(temp_file_path)
+            pygame.mixer.music.play()
+            
+            # Wait for playback to complete
+            while pygame.mixer.music.get_busy():
+                pygame.time.wait(100)
+            
+            # Clean up temporary file
+            os.unlink(temp_file_path)
+            
+        except Exception as e:
+            print(f"{Colors.YELLOW}⚠️ Audio playback error: {e}{Colors.RESET}")
+            # Try direct playback as backup
+            try:
+                # Alternative: save as raw audio and play
+                with tempfile.NamedTemporaryFile(suffix='.raw', delete=False) as temp_file:
+                    temp_file.write(audio_data)
+                    temp_file_path = temp_file.name
+                
+                # Use pygame to play raw audio
+                sound = pygame.sndarray.make_sound(audio_data)
+                sound.play()
+                
+                os.unlink(temp_file_path)
+            except Exception as e2:
+                print(f"{Colors.YELLOW}⚠️ Backup audio playback also failed: {e2}{Colors.RESET}")
+    
     def speak_sync(self, text: str) -> None:
-        """Speak text synchronously (blocks until speech is complete)"""
+        """Speak text synchronously with real audio output"""
         if not self.is_enabled or not self.is_initialized or not text:
             return
         
@@ -178,21 +276,21 @@ class SpeechEngine:
             return f"{Colors.GRAY}🔇 Speech disabled{Colors.RESET}"
     
     def stop_speech(self) -> None:
-        """Stop current speech (if any)"""
+        """Stop current speech playback"""
         try:
-            if self.engine:
-                self.engine.stop()
+            pygame.mixer.music.stop()
+            print(f"{Colors.GRAY}🛑 Speech stopped{Colors.RESET}")
         except Exception as e:
             print(f"{Colors.YELLOW}⚠️ Error stopping speech: {e}{Colors.RESET}")
 
 # Global speech engine instance
-_speech_engine: Optional[SpeechEngine] = None
+_speech_engine: Optional[GoogleADKSpeechEngine] = None
 
-def get_speech_engine() -> SpeechEngine:
-    """Get the global speech engine instance (singleton pattern)"""
+def get_speech_engine() -> GoogleADKSpeechEngine:
+    """Get the global Google ADK speech engine instance (singleton pattern)"""
     global _speech_engine
     if _speech_engine is None:
-        _speech_engine = SpeechEngine()
+        _speech_engine = GoogleADKSpeechEngine()
     return _speech_engine
 
 def speak_text(text: str, async_speech: bool = True) -> None:

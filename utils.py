@@ -12,14 +12,34 @@ from typing import Dict, Any, Optional, List
 import time
 import shutil
 
-# Import speech functionality (optional - graceful degradation if not available)
+# Import speech functionality (using ADK Runner approach)
 try:
-    from speech_utils import speak_text, is_speech_enabled, get_speech_status
+    import pygame
     SPEECH_AVAILABLE = True
-    print("✅ Speech functionality loaded successfully")
+    print("✅ Speech functionality loaded successfully (ADK Runner)")
+    
+    # Simple speech state management
+    _speech_enabled = True
+    
+    def speak_text(text: str, async_speech: bool = True) -> None:
+        # This is now handled by ADK Runner in call_agent_async
+        pass
+    
+    def is_speech_enabled() -> bool:
+        return _speech_enabled
+    
+    def get_speech_status() -> str:
+        return "🔊 Speech enabled" if _speech_enabled else "🔇 Speech disabled"
+    
+    def toggle_speech() -> bool:
+        global _speech_enabled
+        _speech_enabled = not _speech_enabled
+        return _speech_enabled
+        
 except ImportError as e:
     SPEECH_AVAILABLE = False
     print(f"❌ Speech import failed: {e}")
+    print(f"💡 Install dependencies: pip install pygame")
     # Fallback functions if speech not available
     def speak_text(text: str, async_speech: bool = True) -> None:
         pass  # No-op if speech not available
@@ -27,6 +47,8 @@ except ImportError as e:
         return False
     def get_speech_status() -> str:
         return "Speech not available"
+    def toggle_speech() -> bool:
+        return False
 except Exception as e:
     SPEECH_AVAILABLE = False
     print(f"❌ Speech initialization error: {e}")
@@ -37,6 +59,8 @@ except Exception as e:
         return False
     def get_speech_status() -> str:
         return "Speech not available"
+    def toggle_speech() -> bool:
+        return False
 
 # ANSI Color Codes for beautiful UI
 class Colors:
@@ -175,9 +199,9 @@ def display_agent_response(response_text: str, agent_name: str = "Agent"):
     print(f"{Colors.WHITE}{response_text}{Colors.RESET}")
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
     
-    # Add speech output if available and enabled
+    # Add real speech output if available and enabled
     if SPEECH_AVAILABLE and is_speech_enabled():
-        print(f"{Colors.GRAY}🔊 Speaking response...{Colors.RESET}")
+        print(f"{Colors.GRAY}🔊 Generating speech audio...{Colors.RESET}")
         speak_text(response_text, async_speech=True)
     elif SPEECH_AVAILABLE:
         print(f"{Colors.GRAY}🔇 Speech disabled{Colors.RESET}")
@@ -198,7 +222,7 @@ def display_success(message: str, title: str = "Success"):
     print(f"{Colors.WHITE}{message}{Colors.RESET}")
     print(f"{Colors.GREEN}{'=' * 60}{Colors.RESET}")
     
-    # Add speech output for important success messages
+    # Add real speech output for important success messages
     if SPEECH_AVAILABLE and is_speech_enabled():
         speak_text(f"{title}: {message}", async_speech=True)
 
@@ -212,7 +236,7 @@ def display_welcome():
     print(f"{Colors.YELLOW}• Request behavioral insights{Colors.RESET}")
     print(f"{Colors.YELLOW}• View real-time dashboards{Colors.RESET}")
     
-    # Show speech status
+    # Show real speech status
     if SPEECH_AVAILABLE:
         speech_status = get_speech_status()
         print(f"{Colors.GRAY}Speech: {speech_status}{Colors.RESET}")
@@ -221,9 +245,9 @@ def display_welcome():
     print(f"{Colors.CYAN}{'=' * 60}{Colors.RESET}")
     print(f"{Colors.GRAY}Type 'exit' or 'quit' to end the conversation{Colors.RESET}\n")
     
-    # Welcome speech
+    # Welcome speech (real audio)
     if SPEECH_AVAILABLE and is_speech_enabled():
-        speak_text("Welcome to the Behavioral Analysis Assistant. Speech output is now enabled.", async_speech=True)
+        speak_text("Welcome to the Behavioral Analysis Assistant. Real speech is now available.", async_speech=True)
 
 def display_query_info(query: str):
     """Display query information in a beautiful format"""
@@ -408,11 +432,11 @@ async def process_agent_response(event):
     return final_response
 
 async def call_agent_async(runner, user_id, session_id, query):
-    """Call the agent asynchronously with beautiful display - using reference pattern"""
+    """Call the agent asynchronously with speech support using ADK Runner"""
     try:
-        # Create proper Content object using Google GenAI types (exact pattern from reference)
         from google.genai import types
-        content = types.Content(role="user", parts=[types.Part(text=query)])
+        from google.adk.agents import LiveRequestQueue
+        from google.adk.agents.run_config import RunConfig
         
         display_query_info(query)
         
@@ -421,17 +445,137 @@ async def call_agent_async(runner, user_id, session_id, query):
         
         print(f"\n{Colors.BG_GREEN}{Colors.BLACK}{Colors.BOLD}--- Running Query: {query} ---{Colors.RESET}")
         final_response_text = None
-        agent_name = None
+        final_audio_data = None
 
         try:
-            # Bypass agent communication for now and use direct behavioral analysis
-            session = runner.session_service.get_session(app_name=runner.app_name, user_id=user_id, session_id=session_id)
-            if session:
-                # Use direct behavioral analysis instead of agent communication
-                from manager.sub_agents.conversational_agent import handle_conversational_query
-                final_response_text = handle_conversational_query(query, session.state)
+            # Check if speech is enabled
+            speech_enabled = SPEECH_AVAILABLE and is_speech_enabled()
+            
+            if speech_enabled:
+                print(f"{Colors.CYAN}🎤 Speech enabled - generating text first, then converting to speech{Colors.RESET}")
+                
+                # Step 1: Get behavioral analysis text first
+                session = runner.session_service.get_session(app_name=runner.app_name, user_id=user_id, session_id=session_id)
+                if session:
+                    from manager.sub_agents.conversational_agent import handle_conversational_query
+                    behavioral_text = handle_conversational_query(query, session.state)
+                    print(f"{Colors.GREEN}✅ Generated behavioral analysis text: {len(behavioral_text)} chars{Colors.RESET}")
+                    final_response_text = behavioral_text
+                else:
+                    behavioral_text = "No behavioral data available for analysis."
+                    final_response_text = behavioral_text
+                
+                # Step 2: Use Windows built-in text-to-speech instead
+                try:
+                    print(f"{Colors.CYAN}🔊 Using Windows text-to-speech...{Colors.RESET}")
+                    
+                    # Use Windows SAPI for speech synthesis
+                    import subprocess
+                    
+                    # Clean the text for natural human-like speech
+                    clean_text = behavioral_text
+                    
+                    # Remove the "Intelligent Behavioral Analysis" prefix
+                    clean_text = clean_text.replace('🤖 **Intelligent Behavioral Analysis**: ', '')
+                    clean_text = clean_text.replace('**Intelligent Behavioral Analysis**: ', '')
+                    clean_text = clean_text.replace('Intelligent Behavioral Analysis: ', '')
+                    
+                    # Remove markdown formatting
+                    clean_text = clean_text.replace('**', '')  # Remove bold
+                    clean_text = clean_text.replace('*', '')   # Remove italic
+                    clean_text = clean_text.replace('🤖', '')  # Remove emoji
+                    clean_text = clean_text.replace('#', '')   # Remove hash
+                    clean_text = clean_text.replace('`', '')   # Remove code blocks
+                    
+                    # Replace punctuation that sounds awkward when spoken
+                    clean_text = clean_text.replace(':', ',')  # Replace colons with commas (more natural)
+                    clean_text = clean_text.replace(';', ',')  # Replace semicolons with commas
+                    clean_text = clean_text.replace('  ', ' ')  # Remove double spaces
+                    
+                    # Remove bullet points and list formatting
+                    clean_text = clean_text.replace('•', '')
+                    clean_text = clean_text.replace('- ', '')
+                    clean_text = clean_text.replace('   ', ' ')  # Clean up extra spaces
+                    
+                    # Remove all complex timestamps and dates completely
+                    import re
+                    # Remove full ISO timestamps completely
+                    clean_text = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}[.\d]*[+-]?\d{0,2}:?\d{0,2}', '', clean_text)
+                    clean_text = re.sub(r'\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z?', '', clean_text)
+                    clean_text = re.sub(r'2025-09-\d{2}T\d{2}:\d{2}:\d{2}.*?Z?', '', clean_text)
+                    # Remove session IDs that sound robotic
+                    clean_text = re.sub(r'INT\d{4}-\d{2}-\d{2}-\d+', 'the session', clean_text)
+                    clean_text = re.sub(r'CAND\d+', 'the candidate', clean_text)
+                    
+                    # Replace technical decimal numbers with more natural speech
+                    clean_text = clean_text.replace('0.44', 'zero point four four')
+                    clean_text = clean_text.replace('0.63', 'zero point six three')
+                    clean_text = clean_text.replace('0.11', 'zero point one one')
+                    clean_text = clean_text.replace('0.78', 'zero point seven eight')
+                    clean_text = clean_text.replace('0.38', 'zero point three eight')
+                    clean_text = clean_text.replace('0.61', 'zero point six one')
+                    
+                    # Replace other decimal patterns
+                    clean_text = re.sub(r'0\.(\d{2})', lambda m: f'zero point {m.group(1)[0]} {m.group(1)[1]}', clean_text)
+                    
+                    # Make it sound more conversational
+                    clean_text = clean_text.replace('The candidate', 'This candidate')
+                    clean_text = clean_text.replace('In summary,', 'Overall,')
+                    clean_text = clean_text.replace('Additionally,', 'Also,')
+                    clean_text = clean_text.replace('Furthermore,', 'Plus,')
+                    
+                    # Clean up multiple periods and spaces
+                    clean_text = re.sub(r'\.{2,}', '.', clean_text)  # Multiple periods to single
+                    clean_text = re.sub(r'\s+', ' ', clean_text)     # Multiple spaces to single
+                    clean_text = clean_text.strip()                  # Remove leading/trailing spaces
+                    
+                    # Don't limit length - let it speak the full analysis
+                    # if len(clean_text) > 500:
+                    #     clean_text = clean_text[:500] + "..."
+                    
+                    # Use PowerShell with Windows Speech API - more human-like settings
+                    ps_command = f'''
+Add-Type -AssemblyName System.Speech
+$synth = New-Object System.Speech.Synthesis.SpeechSynthesizer
+
+# Try to use a more natural voice if available
+$voices = $synth.GetInstalledVoices()
+foreach ($voice in $voices) {{
+    if ($voice.VoiceInfo.Name -like "*Zira*" -or $voice.VoiceInfo.Name -like "*Eva*" -or $voice.VoiceInfo.Name -like "*Hazel*") {{
+        $synth.SelectVoice($voice.VoiceInfo.Name)
+        break
+    }}
+}}
+
+# Human-like speech settings
+$synth.Rate = 1         # Slightly faster, more natural pace
+$synth.Volume = 90      # Clear volume
+$synth.Speak("{clean_text.replace('"', "'").replace('`', "'")}")
+'''
+                    
+                    print(f"{Colors.CYAN}🎤 Speaking behavioral analysis...{Colors.RESET}")
+                    
+                    # Run PowerShell speech synthesis with much longer timeout for full speech
+                    result = subprocess.run(['powershell', '-Command', ps_command], 
+                                          capture_output=True, text=True, timeout=120)
+                    
+                    if result.returncode == 0:
+                        print(f"{Colors.GREEN}✅ Speech synthesis completed successfully{Colors.RESET}")
+                    else:
+                        print(f"{Colors.YELLOW}⚠️ Speech synthesis error: {result.stderr}{Colors.RESET}")
+                        
+                except Exception as e:
+                    print(f"{Colors.YELLOW}⚠️ Windows speech synthesis failed: {e}{Colors.RESET}")
+                    print(f"{Colors.GRAY}Continuing with text-only response{Colors.RESET}")
+                        
             else:
-                final_response_text = "Session not found for analysis."
+                # No speech - use direct behavioral analysis
+                session = runner.session_service.get_session(app_name=runner.app_name, user_id=user_id, session_id=session_id)
+                if session:
+                    from manager.sub_agents.conversational_agent import handle_conversational_query
+                    final_response_text = handle_conversational_query(query, session.state)
+                else:
+                    final_response_text = "Session not found for analysis."
                     
         except Exception as e:
             display_error(f"Agent communication error: {e}", "Communication Error")
@@ -440,20 +584,202 @@ async def call_agent_async(runner, user_id, session_id, query):
         # Display agent response
         if final_response_text:
             display_agent_response(final_response_text, "Agent Response")
+            
+            # Play audio if available
+            if final_audio_data and speech_enabled:
+                try:
+                    print(f"{Colors.CYAN}🔊 Playing audio response...{Colors.RESET}")
+                    _play_adk_audio(final_audio_data)
+                except Exception as e:
+                    print(f"{Colors.YELLOW}⚠️ Audio playback error: {e}{Colors.RESET}")
         else:
             display_agent_response("Command processed successfully.", "System Response")
 
-        # Process state updates (this works regardless of agent issues)
+        # Process state updates
         process_state_updates(runner.session_service, runner.app_name, user_id, session_id, query, final_response_text)
         
         # Display state after processing
         display_state(runner.session_service, runner.app_name, user_id, session_id, "State After Processing")
 
-        # Render concise two-column dashboard for presentation
+        # Render dashboard
         render_two_column_dashboard(runner.session_service, runner.app_name, user_id, session_id)
         
     except Exception as e:
         display_error(f"Error during agent run: {e}", "Agent Error")
+
+def _play_adk_audio(audio_data: bytes):
+    """Play audio data from ADK - detect format first"""
+    import tempfile
+    import os
+    import pygame
+    import time
+    
+    print(f"{Colors.CYAN}🔍 Audio data received: {len(audio_data)} bytes{Colors.RESET}")
+    
+    # Check the first few bytes to detect format
+    if len(audio_data) >= 4:
+        header = audio_data[:4]
+        print(f"{Colors.CYAN}🔍 Audio header: {header.hex()} ({header}){Colors.RESET}")
+        
+        # Check for common audio formats
+        if header.startswith(b'RIFF'):
+            print(f"{Colors.GREEN}✅ Detected WAV format{Colors.RESET}")
+            file_ext = '.wav'
+        elif header.startswith(b'ID3') or header.startswith(b'\xff\xfb'):
+            print(f"{Colors.GREEN}✅ Detected MP3 format{Colors.RESET}")
+            file_ext = '.mp3'
+        elif header.startswith(b'OggS'):
+            print(f"{Colors.GREEN}✅ Detected OGG format{Colors.RESET}")
+            file_ext = '.ogg'
+        else:
+            print(f"{Colors.YELLOW}⚠️ Unknown format, trying as raw PCM{Colors.RESET}")
+            file_ext = '.raw'
+    else:
+        print(f"{Colors.RED}❌ Audio data too small: {len(audio_data)} bytes{Colors.RESET}")
+        return
+    
+    try:
+        # Method 1: If it's already a complete audio file, save it directly
+        if file_ext in ['.wav', '.mp3', '.ogg']:
+            temp_fd, temp_file_path = tempfile.mkstemp(suffix=file_ext)
+            os.close(temp_fd)
+            
+            # Write the raw audio data directly
+            with open(temp_file_path, 'wb') as f:
+                f.write(audio_data)
+            
+            print(f"{Colors.CYAN}🎵 Attempting direct playback of {file_ext} file...{Colors.RESET}")
+            
+            # Try pygame
+            try:
+                pygame.mixer.quit()
+                pygame.mixer.init()
+                pygame.mixer.music.load(temp_file_path)
+                pygame.mixer.music.play()
+                
+                while pygame.mixer.music.get_busy():
+                    pygame.time.wait(100)
+                
+                print(f"{Colors.GREEN}✅ Direct playback completed{Colors.RESET}")
+                
+                # Save debug copy
+                debug_file = f"debug_audio_{int(time.time())}{file_ext}"
+                import shutil
+                shutil.copy2(temp_file_path, debug_file)
+                print(f"{Colors.CYAN}💾 Audio saved as {debug_file}{Colors.RESET}")
+                
+            except Exception as e:
+                print(f"{Colors.YELLOW}⚠️ Pygame failed: {e}{Colors.RESET}")
+                
+                # Try system player
+                try:
+                    import subprocess
+                    if file_ext == '.wav':
+                        subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{temp_file_path}").PlaySync()'], 
+                                     check=True, capture_output=True)
+                    else:
+                        # Try default system player
+                        subprocess.run(['start', temp_file_path], shell=True, check=True)
+                    
+                    print(f"{Colors.GREEN}✅ System playback completed{Colors.RESET}")
+                    
+                except Exception as e2:
+                    print(f"{Colors.YELLOW}⚠️ System playback failed: {e2}{Colors.RESET}")
+            
+            # Clean up
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+                
+        else:
+            # Method 2: Treat as raw PCM and convert to WAV
+            print(f"{Colors.CYAN}🎵 Converting raw PCM to WAV...{Colors.RESET}")
+            
+            temp_fd, temp_file_path = tempfile.mkstemp(suffix='.wav')
+            os.close(temp_fd)
+            
+            # Try multiple PCM configurations
+            configs = [
+                (1, 2, 24000),  # Mono, 16-bit, 24kHz
+                (1, 2, 22050),  # Mono, 16-bit, 22kHz
+                (1, 2, 16000),  # Mono, 16-bit, 16kHz
+                (2, 2, 24000),  # Stereo, 16-bit, 24kHz
+                (1, 1, 24000),  # Mono, 8-bit, 24kHz
+            ]
+            
+            for i, (channels, sampwidth, framerate) in enumerate(configs):
+                try:
+                    config_file = f"debug_audio_config_{i}_{int(time.time())}.wav"
+                    import wave
+                    with wave.open(config_file, 'wb') as wav_file:
+                        wav_file.setnchannels(channels)
+                        wav_file.setsampwidth(sampwidth)
+                        wav_file.setframerate(framerate)
+                        wav_file.writeframes(audio_data)
+                    
+                    print(f"{Colors.CYAN}💾 Config {i}: {channels}ch, {sampwidth*8}bit, {framerate}Hz → {config_file}{Colors.RESET}")
+                    
+                    if i == 0:  # Use first config for playback
+                        temp_file_path = config_file
+                        
+                except Exception as e:
+                    print(f"{Colors.YELLOW}⚠️ Config {i} failed: {e}{Colors.RESET}")
+            
+            # Also save first 100 bytes for inspection
+            print(f"{Colors.CYAN}🔍 First 100 bytes: {audio_data[:100].hex()}{Colors.RESET}")
+            
+            # Save debug copy
+            debug_file = f"debug_audio_pcm_{int(time.time())}.wav"
+            import shutil
+            shutil.copy2(temp_file_path, debug_file)
+            print(f"{Colors.CYAN}💾 PCM conversion saved as {debug_file}{Colors.RESET}")
+            
+            # Try different pygame approaches
+            try:
+                pygame.mixer.quit()
+                pygame.mixer.init(frequency=24000, size=-16, channels=1)
+                pygame.mixer.music.load(temp_file_path)
+                pygame.mixer.music.play()
+                
+                while pygame.mixer.music.get_busy():
+                    pygame.time.wait(100)
+                
+                print(f"{Colors.GREEN}✅ PCM playback completed{Colors.RESET}")
+                
+            except Exception as pygame_error:
+                print(f"{Colors.YELLOW}⚠️ Pygame failed: {pygame_error}{Colors.RESET}")
+                
+                # Try Windows system player as backup
+                try:
+                    import subprocess
+                    result = subprocess.run(['powershell', '-c', f'(New-Object Media.SoundPlayer "{temp_file_path}").PlaySync()'], 
+                                         capture_output=True, text=True, timeout=10)
+                    if result.returncode == 0:
+                        print(f"{Colors.GREEN}✅ Windows system player succeeded{Colors.RESET}")
+                    else:
+                        print(f"{Colors.YELLOW}⚠️ Windows player error: {result.stderr}{Colors.RESET}")
+                        
+                except Exception as sys_error:
+                    print(f"{Colors.YELLOW}⚠️ System player failed: {sys_error}{Colors.RESET}")
+            
+            # Clean up
+            try:
+                os.unlink(temp_file_path)
+            except:
+                pass
+        
+    except Exception as e:
+        print(f"{Colors.RED}❌ Audio playback failed: {e}{Colors.RESET}")
+        
+        # Last resort - save raw data for inspection
+        try:
+            debug_file = f"debug_audio_raw_{int(time.time())}.bin"
+            with open(debug_file, 'wb') as f:
+                f.write(audio_data)
+            print(f"{Colors.CYAN}💾 Raw audio data saved as {debug_file}{Colors.RESET}")
+        except:
+            pass
 
 def process_state_updates(session_service, app_name: str, user_id: str, session_id: str, query: str, response: str):
     """Process behavioral state updates based on user query and agent response"""

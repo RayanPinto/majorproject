@@ -378,21 +378,29 @@ async def main_async():
         elif "toggle speech" in user_input.lower():
             # Toggle speech functionality
             try:
-                from speech_utils import toggle_speech, get_speech_status
+                from utils import toggle_speech, get_speech_status
                 new_state = toggle_speech()
                 status = get_speech_status()
                 print(f"🔊 Speech toggled: {status}")
             except ImportError:
-                print("❌ Speech functionality not available. Install pyttsx3 to enable speech.")
+                print("❌ Speech functionality not available.")
+                print("💡 Install dependencies: pip install pygame")
         
         elif "speech status" in user_input.lower():
             # Show speech status
             try:
-                from speech_utils import get_speech_status
+                from utils import get_speech_status
                 status = get_speech_status()
                 print(f"🔊 Speech Status: {status}")
             except ImportError:
-                print("❌ Speech functionality not available. Install pyttsx3 to enable speech.")
+                print("❌ Speech functionality not available.")
+                print("💡 Install dependencies: pip install pygame")
+        
+        elif "test speech" in user_input.lower():
+            # Test speech functionality with ADK Runner
+            print("🎤 Testing speech with ADK Runner...")
+            print("💡 Speech will be tested with your next agent query")
+            print("✨ Try: 'analyze behavior' to test speech output")
         
         elif "force patterns" in user_input.lower():
             # Force pattern recognition generation

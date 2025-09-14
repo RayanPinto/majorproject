@@ -373,7 +373,7 @@ def generate_enhanced_behavioral_analysis(state_info):
 # Create the conversational agent
 conversational_agent = Agent(
     name="conversational_agent",
-    model="gemini-2.0-flash",  # Use API for enhanced responses
+    model="gemini-2.0-flash-live-001",  # Use API for enhanced responses
     instruction="""You are an advanced conversational AI assistant for behavioral analysis. Your role is to:
 
 1. **Natural Language Understanding**: Interpret ANY user query about behavioral analysis, regardless of phrasing or keywords. Understand intent, not just specific words.
