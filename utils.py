@@ -16,7 +16,7 @@ import shutil
 try:
     import pygame
     SPEECH_AVAILABLE = True
-    print("✅ Speech functionality loaded successfully (ADK Runner)")
+    print("")
     
     # Simple speech state management
     _speech_enabled = True
